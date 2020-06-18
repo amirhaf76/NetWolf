@@ -5,6 +5,10 @@ from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 
 
+ENCODE_MODE = 'utf-8'
+ERROR_ENCODING = 'backslashreplace'
+
+
 # functions
 def new_name_file(name: str, path: str):
     index = 0
@@ -41,6 +45,26 @@ def get_ith_mb_from(addr, number):
     return temp
 
 
+def extract_directory_message(dir_mes: bytes):
+    str_meg = dir_mes.decode(ENCODE_MODE, ERROR_ENCODING)
+    str_list = str_meg.split('|')
+    res = []
+    for t in str_list:
+        j, k = t.split(',')
+        res.append((j.strip(' \''), int(k)))
+
+    return res
+
+
+def get_checking_number(meg: str):
+    half = len(meg)//2
+    part1 = meg[:half]
+    part2 = meg[half:]
+
+    res = part1.__hash__() + part2.__hash__()
+
+    return res
+
 # end of functions
 
 
@@ -68,9 +92,14 @@ class TcpServer(Server):
         Server.__init__(self)
         self.path = path
         self.host_info = (addr, port)
+        self.__is_end = False
 
     def run(self):
         self.__start_server()
+
+    def stop(self):
+        self.__is_end = True
+        self.__tcp_socket.close()
 
     def __start_server(self):
         # get local address
@@ -91,9 +120,16 @@ class TcpServer(Server):
         # start to listening
         self.__tcp_socket.listen(2)
 
-        while True:
-            temp_socket = self.__tcp_socket.accept()
-            self.__pool.submit(self.__client_handler, temp_socket[0])
+        print('[TCP Server] Server has been started')
+        print('[TCP Server] IP:{} port number:{} path:{}'.
+              format(self.host_info[0], self.host_info[1], self.path))
+        while not self.__is_end:
+            try:
+                temp_socket = self.__tcp_socket.accept()
+                self.__pool.submit(self.__client_handler, temp_socket[0])
+            except OSError:
+                if self.__is_end:
+                    print('[TCP Server] Server stop manually')
 
     def __client_handler(self, skt: socket.socket):
         siz = int.from_bytes(skt.recv(1), 'big', signed=False)
@@ -102,7 +138,7 @@ class TcpServer(Server):
 
         if cmd_name == 'GET':
             name = self.__find_file(skt)
-            if not name is None:
+            if name is not None:
                 self.__send(skt, name)
             else:
                 self.__response_not_found(skt, name)
@@ -137,6 +173,43 @@ class TcpServer(Server):
         data_res = bytearray(f'not found {name}', self.__ENCODE_MODE, self.__ERROR_ENCODING)
         resp_nf = ResponseData(data_res).get_data()
         skt.send(resp_nf)
+
+
+class UdpServer(Server):
+    # 1 Mib
+    __size_of_message = 1024 * 500
+    __udp_socket = None
+
+    def __init__(self, path: str, addr=None, port=0):
+        Server.__init__(self)
+        self.path = path
+        self.host_info = (addr, port)
+        self.__is_end = False
+
+    def run(self):
+        self.__start_server()
+
+    def stop(self):
+        self.__is_end = True
+        self.__udp_socket.close()
+
+    def start(self):
+        addr = self.host_info[0]
+        port = self.host_info[1]
+        if addr is None:
+            addr = socket.gethostbyname(socket.gethostname())
+
+        self.__udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.host_info = self.__udp_socket.getsockname()
+
+        self.__udp_socket.bind((addr, port))
+
+        while not self.__is_end:
+            rec_data, dest = self.__udp_socket.recvfrom(self.__size_of_message)
+            self.__client_handler(self.__udp_socket, rec_data, dest)
+
+    def __client_handler(self, skt: socket.socket, rec_data, det: str):
+        pass
 
 
 class Message:
@@ -225,7 +298,7 @@ class File:
 
         self._close_file(file)
 
-    def save_list_of_data(self, data_list):
+    def save_list_of_data(self, data_list:list):
         file = self._open_file(self.name, self.path)
 
         for data in data_list:
@@ -244,4 +317,73 @@ class File:
     def __str__(self):
         pass  # todo complete str of class file
 
+
+class Node:
+    node_list = list()
+
+    def __init__(self, name: str, ip: str, path: str):
+        self.name = name
+        self.ip = ip
+        self.path = path
+
+    def start_tcp_server(self):
+        pass
+
+    def start_udp_server(self):
+        pass
+
+    def __download_file(self, name: str):
+        pass
+
+    def __create_get_message(self):
+        pass
+
+    def __create_discovery_message(self):
+        pass
+
+    def __create_response_message(self):
+        pass
+
+    def __send_discover(self, discovery):
+        pass
+
+    def __update_list(self, node_list):
+        pass
+
+    def __serialize_data(self, s_date):
+        pass
+
+    def __deserialize_data(self, s_data):
+        pass
+
+    def __handle_response(self):
+        pass
+
+    def __save_file(self):
+        pass
+
+    def __chose_best(self):
+        pass
+
+    def __reassemble_file(self):
+        pass
+
+
+class NetWolf:
+    """
+    This is main class of NetWolf project
+    date: 6/8/2020
+    author: Amirhosein Amir Firouzkouhi ( 9528007)
+    """
+
+    def __init__(self):
+        print('NetWolf 1398-1399')
+        self.port = int(input('Please enter port number: '))
+        self.dir = input('Please enter directory of list: ')
+
+    def __start_user_command(self):
+        pass
+
+    def __str__(self):
+        return "Net wolf < version 1>"
 # end of classes
