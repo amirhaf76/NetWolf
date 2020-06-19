@@ -16,6 +16,8 @@ def new_name_file(name: str, path: str):
         index += 1
         if index == 1:
             dot = name.rfind('.', 0, len(name))
+            if dot == -1:
+                dot = len(name)
             name = name[:dot] + f'({index})' + name[dot:]
         else:
             name = name.replace(f'({index - 1})', f'({index})')
@@ -35,8 +37,8 @@ def separate_to_mb(data_array: bytearray):
     return mb
 
 
-def get_ith_mb_from(addr, number):
-    file = open(addr, 'rb')
+def get_ith_mb_from(path: str, name: str, number: int):
+    file = open(path + os.sep + name, 'rb')
 
     file.seek((10 ** 6) * number, 0)
     temp = file.read(10 ** 6)
@@ -56,7 +58,25 @@ def extract_directory_message(dir_mes: bytes):
     return res
 
 
-def get_checking_number(meg: str):
+def extract_command_and_data(skt: socket.socket, getaddr=False):
+    addr = None
+    if getaddr:
+        temp, addr = skt.recvfrom(1)
+    else:
+        temp = skt.recvfrom(1)
+    command_siz = int.from_bytes(temp, 'big', signed=False)
+    command = skt.recv(command_siz).decode(ENCODE_MODE, ERROR_ENCODING)
+    data_siz = int.from_bytes(skt.recv(2), 'big', signed=False)
+    data = skt.recv(data_siz)
+
+    if getaddr:
+        return command, data, addr
+    else:
+        return command, data
+
+
+def get_checking_number(meg: bytes):
+    meg = meg.decode(ENCODE_MODE, ERROR_ENCODING)
     half = len(meg)//2
     part1 = meg[:half]
     part2 = meg[half:]
@@ -64,6 +84,55 @@ def get_checking_number(meg: str):
     res = part1.__hash__() + part2.__hash__()
 
     return res
+
+
+def is_there_file(path: str, name: str):
+    return name in os.listdir(path)
+
+
+def get_size_of_file(path: str, name: str):
+    """
+    get size of file in MB
+    :param path: path of file
+    :param name: name of file
+    :return: if there is file, it will return size,
+    if there isn't, it will return None
+    """
+    if is_there_file(path, name):
+
+        file = open(path + os.sep + name, 'rb')
+        size = ceil(file.seek(0, 2) / (10 ** 6))
+        file.close()
+
+        return size
+    else:
+        return None
+
+
+def assemble_files(path: str, name: str, new_path: str, new_name: str):
+    new_file = open(new_path + os.sep + new_name, 'wb')
+
+    index = 0
+    temp_list = []
+    base_name = name
+
+    while name in os.listdir(path):
+        temp_list.append(name)
+
+        temp_file = open(path + os.sep + name, 'rb')
+        new_file.write(temp_file.read())
+        temp_file.close()
+
+        dot = name.rfind('.', 0, len(name))
+        if dot == -1:
+            dot = len(name)
+
+        index += 1
+        name = base_name[:dot] + f'({index})' + base_name[dot:]
+
+    for n in temp_list:
+        os.remove(path + os.sep + n)
+    new_file.close()
 
 # end of functions
 
@@ -132,26 +201,22 @@ class TcpServer(Server):
                     print('[TCP Server] Server stop manually')
 
     def __client_handler(self, skt: socket.socket):
-        siz = int.from_bytes(skt.recv(1), 'big', signed=False)
-        cmd_name = skt.recv(siz)
-        cmd_name = cmd_name.decode(self.__ENCODE_MODE, self.__ERROR_ENCODING)
+        command, raw_data = extract_command_and_data(skt, getaddr=False)
+        name = bytearray(raw_data).decode(ENCODE_MODE, ERROR_ENCODING)
 
-        if cmd_name == 'GET':
-            name = self.__find_file(skt)
-            if name is not None:
+        if command == 'GET':
+            if is_there_file(self.path, name):
                 self.__send(skt, name)
             else:
                 self.__response_not_found(skt, name)
         skt.close()
 
     def __send(self, skt: socket.socket, name: str):
-        file = open(name, 'rb')
-        number = ceil(file.seek(0, 2) / (10 ** 6))
-        file.close()
 
-        for part in range(number):
+        size = get_size_of_file(self.path, name)
+        for part in range(size):
             # use get_ith_mb_from function
-            data_file = get_ith_mb_from(name, number)
+            data_file = get_ith_mb_from(self.path, name, part)
 
             resp = ResponseData(data_file)
             skt.send(resp.get_data())
@@ -159,15 +224,6 @@ class TcpServer(Server):
         # send final response
         resp_done = bytearray(f'done {name}', self.__ENCODE_MODE, self.__ERROR_ENCODING)
         skt.send(ResponseData(resp_done).get_data())
-
-    def __find_file(self, skt: socket.socket):
-        siz = int.from_bytes(skt.recv(1), 'big', signed=False)
-        name = skt.recv(siz).decode(self.__ENCODE_MODE, self.__ERROR_ENCODING)
-
-        if name in os.listdir(self.path):
-            return self.path + '\\' + name
-        else:
-            return None
 
     def __response_not_found(self, skt: socket.socket, name):
         data_res = bytearray(f'not found {name}', self.__ENCODE_MODE, self.__ERROR_ENCODING)
@@ -180,10 +236,11 @@ class UdpServer(Server):
     __size_of_message = 1024 * 500
     __udp_socket = None
 
-    def __init__(self, path: str, addr=None, port=0):
+    def __init__(self, path: str, dir_l: list, addr=None, port=0):
         Server.__init__(self)
         self.path = path
         self.host_info = (addr, port)
+        self.dir = dir_l
         self.__is_end = False
 
     def run(self):
@@ -193,7 +250,7 @@ class UdpServer(Server):
         self.__is_end = True
         self.__udp_socket.close()
 
-    def start(self):
+    def __start_server(self):
         addr = self.host_info[0]
         port = self.host_info[1]
         if addr is None:
@@ -205,11 +262,14 @@ class UdpServer(Server):
         self.__udp_socket.bind((addr, port))
 
         while not self.__is_end:
-            rec_data, dest = self.__udp_socket.recvfrom(self.__size_of_message)
-            self.__client_handler(self.__udp_socket, rec_data, dest)
+            command, rec_data, dest = extract_command_and_data(self.__udp_socket, getaddr=True)
+            self.__client_handler(command, rec_data, dest)
 
-    def __client_handler(self, skt: socket.socket, rec_data, det: str):
-        pass
+    def __client_handler(self, command: str, rec_data: bytes, dest: str):
+        check_n, raw_data = extract_check_number(rec_data)
+        if check_n == get_checking_number(rec_data):
+            if command == DirectoryData.command:
+                self.dir.append(extract_directory_message(raw_data))
 
 
 class Message:
@@ -242,7 +302,7 @@ class GetData(Message):
         """
         temp = bytearray(self.command, 'utf-8', 'backslashreplace')
         packet = bytearray([len(temp)]) + temp
-        packet += len(self.message_data)
+        packet += bytearray([len(self.message_data)])
         packet += self.message_data
 
         return packet
@@ -261,7 +321,7 @@ class ResponseData(Message):
         """
         temp = bytearray(self.command, 'utf-8', 'backslashreplace')
         packet = bytearray([len(temp)]) + temp
-        packet += len(self.message_data)
+        packet += bytearray([len(self.message_data)])
         packet += self.message_data
 
         return packet
@@ -280,38 +340,35 @@ class DirectoryData(Message):
         """
         temp = bytearray(self.command, 'utf-8', 'backslashreplace')
         packet = bytearray([len(temp)]) + temp
-        packet += len(self.message_data)
+        packet += bytearray([len(self.message_data)])
         packet += self.message_data
 
         return packet
 
 
 class File:
-    def __init__(self, name=None, path=None):
+    def __init__(self, name, path):
         self.name = name
         self.path = path
 
     def save_data(self, data: bytearray):
-        file = self._open_file(self.name, self.path)
+        file = self.__open_file()
 
         file.write(data)
 
-        self._close_file(file)
+        file.close()
 
-    def save_list_of_data(self, data_list:list):
-        file = self._open_file(self.name, self.path)
+    def save_list_of_data(self, data_list: list):
+        file = self.__open_file()
 
         for data in data_list:
             file.write(data)
 
-        self._close_file(file)
-
-    def _close_file(self, file):
         file.close()
 
-    def _open_file(self, name: str, path: str):
-        name = new_name_file(name, path)
-        __f = open(path + '\\' + name, 'wb')
+    def __open_file(self):
+        name = new_name_file(self.name, self.path)
+        __f = open(self.path + '\\' + name, 'wb')
         return __f
 
     def __str__(self):
@@ -387,3 +444,22 @@ class NetWolf:
     def __str__(self):
         return "Net wolf < version 1>"
 # end of classes
+
+
+def send_message_to(server_info: (str, int), mes: Message):
+    skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    skt.sendto(mes.get_data(), server_info)
+
+
+def extract_check_number(data_str: bytes):
+    """
+    1B size of check number, read check number's bytes,
+     rest of that is data
+    :param data_str:
+    :return:
+    """
+    chk_number_size = data_str[0]
+    chk_n = int.from_bytes(data_str[1:chk_number_size], 'big', signed=True)
+    raw_data = data_str[chk_number_size:]
+
+    return chk_n, raw_data
