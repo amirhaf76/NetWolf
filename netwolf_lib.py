@@ -4,7 +4,6 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 
-
 ENCODE_MODE = 'utf-8'
 ERROR_ENCODING = 'backslashreplace'
 
@@ -52,8 +51,24 @@ def extract_directory_message(dir_mes: bytes):
     str_list = str_meg.split('|')
     res = []
     for t in str_list:
-        j, k = t.split(',')
-        res.append((j.strip(' \''), int(k)))
+        temp_list = t.split(',')
+        if len(temp_list) == 4:
+            ipp = None
+            ppn = None
+
+            if not temp_list[2].strip(' \'') == 'None':
+                ipp = temp_list[2].strip(' \'')
+            if not temp_list[3].strip(' \'') == 'None':
+                ppn = int(temp_list[3])
+
+            temp_tuple = (temp_list[0].strip(' \''),
+                          int(temp_list[1]),
+                          ipp,
+                          ppn)
+
+            res.append(temp_tuple)
+        else:
+            print("not found")
 
     return res
 
@@ -77,7 +92,7 @@ def extract_command_and_data(skt: socket.socket, getaddr=False):
 
 def get_checking_number(meg: bytes):
     meg = meg.decode(ENCODE_MODE, ERROR_ENCODING)
-    half = len(meg)//2
+    half = len(meg) // 2
     part1 = meg[:half]
     part2 = meg[half:]
 
@@ -133,6 +148,7 @@ def assemble_files(path: str, name: str, new_path: str, new_name: str):
     for n in temp_list:
         os.remove(path + os.sep + n)
     new_file.close()
+
 
 # end of functions
 
@@ -199,6 +215,8 @@ class TcpServer(Server):
             except OSError:
                 if self.__is_end:
                     print('[TCP Server] Server stop manually')
+                else:
+                    print(OSError)
 
     def __client_handler(self, skt: socket.socket):
         command, raw_data = extract_command_and_data(skt, getaddr=False)
@@ -257,13 +275,21 @@ class UdpServer(Server):
             addr = socket.gethostbyname(socket.gethostname())
 
         self.__udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.__udp_socket.bind((addr, port))
         self.host_info = self.__udp_socket.getsockname()
 
-        self.__udp_socket.bind((addr, port))
-
+        print('[UDP Server] Server has been started')
+        print('[UDP Server] IP:{} port number:{} path:{}'.
+              format(self.host_info[0], self.host_info[1], self.path))
         while not self.__is_end:
-            command, rec_data, dest = extract_command_and_data(self.__udp_socket, getaddr=True)
-            self.__client_handler(command, rec_data, dest)
+            try:
+                command, rec_data, dest = extract_command_and_data(self.__udp_socket, getaddr=True)
+                self.__client_handler(command, rec_data, dest)
+            except OSError:
+                if self.__is_end:
+                    print('[UDP Server] Server stop manually')
+                else:
+                    print(OSError)
 
     def __client_handler(self, command: str, rec_data: bytes, dest: str):
         check_n, raw_data = extract_check_number(rec_data)
@@ -443,12 +469,41 @@ class NetWolf:
 
     def __str__(self):
         return "Net wolf < version 1>"
+
+
 # end of classes
 
 
 def send_message_to(server_info: (str, int), mes: Message):
     skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     skt.sendto(mes.get_data(), server_info)
+
+
+def send_message_to_get_file(name: str, server_info: (str, int)):
+    mes = GetData(bytearray(name, ENCODE_MODE, ERROR_ENCODING))
+    send_message_to(server_info, mes)
+
+
+def prepare_directory_message(addr_dict: dict):
+    """
+    dict = { 'ip' : (portNum, 'ipProxy', proxyPortNumber) or
+     'ip' : (portNum)}
+
+    :param addr_dict:
+    :return:
+    """
+    res = []
+    for key in addr_dict.keys():
+        value = addr_dict[key]
+        if len(value) == 3:
+            temp = '{ip}, {portNum}, {ipp}, {ppn}'.format(ip=key,
+                                                          portNum=value[0],
+                                                          ipp=value[1],
+                                                          ppn=value[2])
+            res.append(temp)
+        else:
+            return 'error in prepare_directory_message'
+    return '|'.join(res)
 
 
 def extract_check_number(data_str: bytes):

@@ -3,7 +3,7 @@ import unittest as ut
 import os
 import socket
 from time import sleep
-from math import ceil
+
 
 TEST_PATH_LIST = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Test']
 FILE_FOR_TESTING_PATH_LIST = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Files_for_testing']
@@ -19,6 +19,16 @@ class TestTcpServer(ut.TestCase):
         tcp.start()
         sleep(2)
         tcp.stop()
+        sleep(1)
+
+
+class TestUdpServer(ut.TestCase):
+
+    def test_start_and_stop(self):
+        udp = nfb.UdpServer(TEST_PATH, [], IP, 4433)
+        udp.start()
+        sleep(2)
+        udp.stop()
         sleep(1)
 
 
@@ -47,6 +57,9 @@ class TestFilesFunction(ut.TestCase):
 
 
 class TestAllKindMessage(ut.TestCase):
+    """
+    test all kind of messages
+    """
 
     def test_messages(self):
         self.test_dir_message()
@@ -78,6 +91,10 @@ class TestAllKindMessage(ut.TestCase):
 class TestFunctions(ut.TestCase):
 
     def test(self):
+        """
+        test get_size_of_file, assemble_files, get_size_of_file
+        :return:
+        """
         name1 = 'Awaken.mp3'
         name2 = 'download'
 
@@ -91,4 +108,32 @@ class TestFunctions(ut.TestCase):
 
         nfb.assemble_files(TEST_PATH, 'download', TEST_PATH, 'music.mp3')
 
+    def test_extract_directory_message(self):
+        test = [('amir', 232, 'io3232', 54645), ('ali', 545, None, None)]
 
+        test_list = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
+        temp = (test_list.encode('utf-8', 'ignore'))
+        temp_res = nfb.extract_directory_message(temp)
+
+        self.assertListEqual(temp_res, test)
+
+        test_list = " 'amir' , 232, 'io3232', 546,45 | 'ali', 545, 'None', 'None'"
+        temp = (test_list.encode('utf-8', 'ignore'))
+        temp_res = nfb.extract_directory_message(temp)
+
+        self.assertNotEqual(temp_res, test)
+
+    def test_prepare_directory_message(self):
+        test = {'amir': (232, 'io3232', 54645), 'ali': (545, None, None)}
+        test_str = '{ip}, {portNum}, {ipp}, {ppn}|{ip1}, {portNum1}, {ipp1}, {ppn1}'.format(
+            ip='amir',
+            portNum=232,
+            ipp='io3232',
+            ppn=54645,
+            ip1='ali',
+            portNum1=545,
+            ipp1=None,
+            ppn1=None
+        )
+        mes = nfb.prepare_directory_message(test)
+        self.assertEqual(mes, test_str)
