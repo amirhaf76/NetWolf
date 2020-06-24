@@ -114,7 +114,7 @@ def extract_message(skt: socket.socket):
         addr = extract_source_and_destination(bytearray(skt.recv(addr_siz)))
     data = skt.recv(data_siz)
 
-    return command, addr, data
+    return command, addr, bytearray(data)
 
 
 def get_checking_number(meg: bytes):
@@ -246,29 +246,29 @@ class TcpServer(Server):
                     print(OSError)
 
     def __client_handler(self, skt: socket.socket):
-        command, raw_data = extract_message(skt, getaddr=False)
-        name, src_dst, data_file_size, data_file_data = extract_download_data(raw_data)
+        command, src_des, raw_data = extract_message(skt)
 
         if command == DownloadData.command:
+            name = extract_download_data(raw_data)
             if is_there_file(self.path, name):
-                self.__send(skt, name)
+                self.__send(skt, name, src_des)
             else:
                 self.__response_not_found(skt, name)
         skt.close()
 
-    def __send(self, skt: socket.socket, name: str):
+    def __send(self, skt: socket.socket, name: str, src_des):
 
         size = get_size_of_file(self.path, name)
         for part in range(size):
             # use get_ith_mb_from function
             data_file = get_ith_mb_from(self.path, name, part)
-
-            send_response_message_to()
-
+            rsp_data = prepare_response_data(f'{name}_part_{size}', bytearray(data_file))
+            rsp_mes = ResponseData(rsp_data, src_des[0], src_des[1])
+            # skt.send
 
         # send final response
-        resp_done = bytearray(f'done {name}', self.__ENCODE_MODE, self.__ERROR_ENCODING)
-        skt.send(ResponseData(resp_done).get_data())
+        rsp_done = prepare_response_data(f'done_{name}', bytearray(0))
+        skt.send(ResponseData(rsp_done).get_data())
 
     def __response_not_found(self, skt: socket.socket, name):
         data_res = bytearray(f'not found {name}', self.__ENCODE_MODE, self.__ERROR_ENCODING)
@@ -539,6 +539,19 @@ def prepare_directory_message(addr_dict: dict):
     return '|'.join(res)
 
 
+def prepare_response_data(rsp_txt: str, rsp_raw_data: bytearray):
+    """
+
+    :param rsp_txt: length of rsp_message must be less than 255
+    :param rsp_raw_data:
+    :return:
+    """
+    rsp_txt = bytearray(rsp_txt, ENCODE_MODE, ERROR_ENCODING)
+    rsp_txt_size = len(rsp_txt)
+    rsp_raw_data_size = len(rsp_raw_data)
+    return bytearray([rsp_txt_size, rsp_raw_data_size]) + rsp_txt + rsp_raw_data
+
+
 def send_message_to(mes: Message):
     skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     if mes.proxy_server_info is None:
@@ -562,8 +575,8 @@ def send_directory_message_to(dir_dict: dict, server_info: tuple, proxy_server_i
     send_message_to(mes_data)
 
 
-def send_response_message_to(rsp: str, server_info: tuple, proxy_server_info: tuple = None):
-    resp_data = ResponseData(bytearray(rsp, ENCODE_MODE, ERROR_ENCODING),
+def send_response_message_to(rsp: bytearray, server_info: tuple, proxy_server_info: tuple = None):
+    resp_data = ResponseData(rsp,
                              server_info,
                              proxy_server_info)
     send_message_to(resp_data)
@@ -584,9 +597,11 @@ def extract_download_data(raw_data: bytearray):
 
 
 def extract_response_data(raw_data: bytearray):
-    rsp_size = raw_data[0]
-    rsp = raw_data[1:rsp_size + 1].decode(ENCODE_MODE, ERROR_ENCODING)
-    return rsp
+    rsp_txt_size = raw_data[0]
+    # rsp_data_size = raw_data[1]
+    rsp_txt = raw_data[2:rsp_txt_size + 1].decode(ENCODE_MODE, ERROR_ENCODING)
+    rsp_data = raw_data[rsp_txt_size + 1:]
+    return rsp_txt, rsp_data
 
 
 def extract_check_number(data_str: bytes):
