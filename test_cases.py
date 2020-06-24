@@ -109,13 +109,13 @@ class TestFunctions(ut.TestCase):
         nfb.assemble_files(TEST_PATH, 'download', TEST_PATH, 'music.mp3')
 
     def test_extract_directory_message(self):
-        test = [('amir', 232, 'io3232', 54645), ('ali', 545, None, None)]
+        test = {'amir': (232, 'io3232', 54645), 'ali': (545, None, None)}
 
         test_list = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
         temp = (test_list.encode('utf-8', 'ignore'))
         temp_res = nfb.extract_directory_message(temp)
 
-        self.assertListEqual(temp_res, test)
+        self.assertDictEqual(temp_res, test)
 
         test_list = " 'amir' , 232, 'io3232', 546,45 | 'ali', 545, 'None', 'None'"
         temp = (test_list.encode('utf-8', 'ignore'))
