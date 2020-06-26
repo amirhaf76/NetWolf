@@ -91,22 +91,22 @@ class TestAllKindMessage(ut.TestCase):
 
     def test_get_message(self):
         arr = bytearray(list(range(0, 200)))
-        mes = nfb.GetData(arr)
-        res = mes.get_data()
+        mes = nfb.GetData(None, None, None)
+        res = mes.get_message_data()
         res = res[(1+len(mes.command) + 1):]
         self.assertListEqual([res], [res])
 
     def test_dir_message(self):
         arr = bytearray(list(range(0, 200)))
-        mes = nfb.DirectoryData(arr)
-        res = mes.get_data()
+        mes = nfb.DirectoryData(None, None, None)
+        res = mes.get_message_data()
         res = res[(1+len(mes.command) + 1):]
         self.assertListEqual([res], [res])
 
     def test_res_message(self):
         arr = bytearray(list(range(0, 200)))
-        mes = nfb.ResponseData(arr)
-        res = mes.get_data()
+        mes = nfb.ResponseData(None, None, None)
+        res = mes.get_message_data()
         res = res[(1+len(mes.command) + 1):]
         self.assertListEqual([res], [res])
 

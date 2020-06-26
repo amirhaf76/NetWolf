@@ -17,8 +17,11 @@ SRC = 'SRC'
 
 NOT_FOUND_RESPONSE_TEXT = '<NOT FOUND>'
 FOUND_RESPONSE_TEXT = '<FOUND>'
+SENDING_WAS_FINISHED = '<SWF>'
 
 BRIDGE_SIZE_READ = 5
+BRIDGE_CLOSE = '<BRIDGE_CLOSE>'
+BRIDGE_MAKE = '<BRIDGE_MAKE'
 
 
 # functions
@@ -272,13 +275,37 @@ class TcpServer(Server):
         if command == DownloadData.command:
             name = extract_download_data(raw_data)
             if is_there_file(self.path, name):
-                self.__send(name, src_des)
+                self.__send(name, src_des[DES], src_des[SRC])
             else:
                 self.__response_not_found(name)
 
         skt.close()
 
-    def __send(self, name: str, src_des: dict):
+    def __handle_bridge(self, in_skt: socket.socket, command: str, src_des: dict, raw_data: bytearray):
+
+        check_mes, next_des = is_there_next_des(self.host_info, src_des[DES])
+
+        if check_mes:
+            out_skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            out_skt.connect(next_des)
+
+            out_skt.send(reassemble_mes(command, src_des, raw_data).get_data())
+
+            command, src_des, raw_data = extract_message(in_skt)
+            out_skt.send(reassemble_mes(command, src_des, raw_data).get_data())
+
+            bridge = BridgeConnection(in_skt, out_skt)
+            bridge.start()
+        else:
+            command, src_des, raw_data = extract_message(in_skt)
+            if command == DownloadData.command:
+                name = extract_download_data(raw_data)
+                if is_there_file(self.path, name):
+                    self.__send(name, src_des[DES], src_des[SRC])
+                else:
+                    self.__response_not_found(name)
+
+    def __send(self, name: str, src: tuple, des: tuple):
 
         size = get_byte_size_of_file(self.path, name)
 
@@ -287,27 +314,19 @@ class TcpServer(Server):
             data_file = get_ith_mb_from(self.path, name, part)
 
             rsp_data = prepare_response_data(f'{name}_part_{size}', bytearray(data_file))
-            rsp_mes = ResponseData(rsp_data, src_des[DES], src_des[SRC])
+            rsp_mes = ResponseData(rsp_data, src, des)
 
             self.__tcp_socket.send(rsp_mes.get_data())
 
         # send final response
-        self.__response_done(name, src_des)
+        self.__response_done(name, src, des)
 
     def __response_not_found(self, name):
         pass
 
-    def __response_done(self, name, src_des: dict):
+    def __response_done(self, name, src: tuple, des: tuple):
         rsp_done = prepare_response_data(f'done_{name}', bytearray(0))
-        self.__tcp_socket.send(ResponseData(rsp_done, src_des[SRC], src_des[DES]).get_data())
-
-    # def __send_straight(self, command: str, src_des: dict, raw_data: bytearray):
-    #     if command == DownloadData.command:
-    #         name = extract_download_data(raw_data)
-    #         if is_there_file(self.path, name):
-    #             self.__send(name, src_des)
-    #         else:
-    #             self.__response_not_found(name)
+        self.__tcp_socket.send(ResponseData(rsp_done, src, des).get_data())
 
 
 class UdpServer(Server):
@@ -388,7 +407,7 @@ class UdpServer(Server):
         name = rec_data.decode(ENCODE_MODE, ERROR_ENCODING)
 
         # find next_destination for routing
-        next_des = src_des[SRC]
+        send, next_des = is_there_next_des(self.host_info, src_des[SRC])
 
         # is there file
         if is_there_file(self.path, name):
@@ -425,10 +444,10 @@ class UdpServer(Server):
 class Message:
     command = '<command>'
 
-    def __init__(self, message_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
+    def __init__(self, message_data: bytearray, src: tuple, des: tuple):
         self.message_data = message_data
-        self.src_server_info = src_server_info
-        self.des_server_info = des_server_info
+        self.src_server_info = src
+        self.des_server_info = des
 
     def get_data(self):
         """
@@ -499,30 +518,69 @@ class Message:
 
 class GetData(Message):
 
-    def __init__(self, get_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
-        Message.__init__(self, get_data, src_server_info, des_server_info)
+    def __init__(self, get_data: bytearray, src: tuple, des: tuple):
+        Message.__init__(self, get_data, src, des)
         self.command = 'GET'
 
 
 class DownloadData(Message):
 
-    def __init__(self, dwn_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
-        Message.__init__(self, dwn_data, src_server_info, des_server_info)
+    def __init__(self, dwn_data: bytearray, src: tuple, des: tuple):
+        Message.__init__(self, dwn_data, src, des)
         self.command = 'DOWNLOAD'
 
 
 class ResponseData(Message):
 
-    def __init__(self, res_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
-        Message.__init__(self, res_data, src_server_info, des_server_info)
+    def __init__(self, rsp_data: bytearray, src: tuple, des: tuple):
+        Message.__init__(self, rsp_data, src, des)
         self.command = 'RSP'
 
 
 class DirectoryData(Message):
     # todo complete directory data, it needs to define its format
-    def __init__(self, dir_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
-        Message.__init__(self, dir_data, src_server_info, des_server_info)
+    def __init__(self, dir_data: bytearray, src: tuple, des: tuple):
+        Message.__init__(self, dir_data, src, des)
         self.command = 'DIR'
+
+
+class BridgeData(Message):
+    # todo complete directory data, it needs to define its format
+    def __init__(self, brg_data: bytearray, src: tuple, des: tuple):
+        Message.__init__(self, brg_data, src, des)
+        self.command = 'BRG'
+
+
+def reassemble_mes(command, src_des, raw_data):
+    func = {DownloadData.command: DownloadData,
+            GetData.command: GetData,
+            ResponseData.command: ResponseData,
+            DirectoryData.command: DirectoryData}
+    mes = func[command](raw_data, src_des[SRC], src_des[DES])
+
+    return mes
+
+
+class BridgeConnection:
+
+    def __init__(self, side1: socket.socket, side2: socket.socket):
+        self.side1 = side1
+        self.side2 = side2
+        self.running = False
+
+    def start(self):
+        self.running = True
+
+        while self.running:
+            command, src_des, raw_data = extract_message(self.side2)
+
+            if command == BridgeData.command:
+                statue = raw_data.decode(ENCODE_MODE, ERROR_ENCODING)
+                if statue == BRIDGE_CLOSE:
+                    self.running = False
+
+            mes = reassemble_mes(command, src_des, raw_data)
+            self.side1.send(mes.get_data())
 
 
 class File:
@@ -632,7 +690,6 @@ class NotMatchFormat(Exception):
 
 
 # end of classes
-
 def prepare_directory_message(addr_dict: dict):
     """
     dict = { 'ip' : (portNum, 'ipProxy', proxyPortNumber) or
@@ -684,34 +741,50 @@ def send_message_to(mes: Message, next_des: tuple):
 
 
 def send_message_to_get_file(name: str, src_server: tuple, des_server: tuple, next_des: tuple):
-    mes = GetData(bytearray(name, ENCODE_MODE, ERROR_ENCODING),
-                  src_server,
-                  des_server)
+    mes = GetData(bytearray(name, ENCODE_MODE, ERROR_ENCODING), src_server, des_server)
     send_message_to(mes, next_des)
 
 
 def send_directory_message_to(dir_dict: dict, src_server: tuple, des_server: tuple, next_des: tuple):
     mes = prepare_directory_message(dir_dict)
-    mes_data = DirectoryData(bytearray(mes, ENCODE_MODE, ERROR_ENCODING),
-                             src_server,
-                             des_server)
+    mes_data = DirectoryData(bytearray(mes, ENCODE_MODE, ERROR_ENCODING), src_server, des_server)
     send_message_to(mes_data, next_des)
 
 
 def send_response_message_to(rsp: bytearray, src_server: tuple, des_server: tuple, next_des: tuple):
-    resp_data = ResponseData(rsp,
-                             src_server,
-                             des_server)
+    resp_data = ResponseData(rsp, src_server, des_server)
     send_message_to(resp_data, next_des)
 
 
-def download_file_from(name: str, src: tuple, des: tuple, base: tuple):
-    receiver = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+def recv_data(skt: socket.socket, path, name):
+    running = True
+    file = File(name, path)
+    while running:
+        command, src_des, raw_data = extract_message(skt)
+        if command == ResponseData.command:
+            txt, file_data = extract_response_data(raw_data)
+            if txt == SENDING_WAS_FINISHED:
+                break
+
+            file.save_data(file_data)
+
+
+def download_file_from(name: str, src: tuple, des: tuple, save_in: str, save_as: str):
+
+    skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     raw_data = bytearray([len(name)]) + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
-    download_mes = DownloadData(raw_data,
-                                src,
-                                des)
+    download_mes = DownloadData(raw_data, src, des)
+
+    if does_need_a_bridge(src, des):
+        raw_data = bytearray(BRIDGE_MAKE, ENCODE_MODE, ERROR_ENCODING)
+        bridge_mes = BridgeData(raw_data, src, des)
+
+        skt.send(bridge_mes.get_data())
+
+    skt.send(download_mes.get_data())
+
+    recv_data(skt, save_in, save_as)
 
 
 def extract_download_data(raw_data: bytearray):
@@ -770,3 +843,12 @@ def update_proxy_of_server(dir_dict: dict, node_ip: str):
         dir_dict.update([(node_ip, (pn, host[0], host[1]))])
     return dir_dict
 
+
+def does_need_a_bridge(src: tuple, des: tuple):
+    src_ip, src_pn, src_ipp, src_ppn = src
+    des_ip, des_pn, des_ipp, des_ppn = des
+
+    if src_ipp == des_ipp:
+        return False
+    else:
+        return True
