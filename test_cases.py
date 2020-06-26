@@ -159,7 +159,7 @@ class TestFunctions(ut.TestCase):
 
         test_list = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
         temp = (test_list.encode('utf-8', 'ignore'))
-        temp_res = nfb.extract_directory_message(temp)
+        temp_res = nfb.make_directory_dictionary(temp)
 
         self.assertDictEqual(temp_res, test)
 
@@ -167,7 +167,7 @@ class TestFunctions(ut.TestCase):
         temp = (test_list.encode('utf-8', 'ignore'))
 
         try:
-            temp_res = nfb.extract_directory_message(temp)
+            temp_res = nfb.make_directory_dictionary(temp)
             self.assertNotEqual(temp_res, test)
         except nfb.NotMatchFormat:
             pass

@@ -16,6 +16,7 @@ DES = 'DES'
 SRC = 'SRC'
 
 NOT_FOUND_RESPONSE_TEXT = '<NOT FOUND>'
+FOUND_RESPONSE_TEXT = '<FOUND>'
 
 BRIDGE_SIZE_READ = 5
 
@@ -112,19 +113,27 @@ def extract_message(skt: socket.socket):
     return command, addr, bytearray(data)
 
 
-def extract_directory_message(dir_mes: bytes):
+def make_directory_dictionary(dir_dict: bytes):
     """
     extract directory from directory message
-    :param dir_mes: it's bytes that it needs to decode
+    :param dir_dict: it's bytes that it needs to decode
     its format is " ... |ip, portNumber, ipProxy, proxy port number| ... "
     :return: dict
     """
-    addr = extract_address_port_format(dir_mes)
+    addr = extract_address_port_format(dir_dict)
     dir_list = []
     for ip, pn, ipp, ppn in addr:
         dir_list.append((ip, (pn, ipp, ppn)))
 
     return dict(dir_list)
+
+
+def filter_directory_dictionary(base_ip: str, src: tuple, dir_dict: dict):
+    if dir_dict.__contains__(base_ip):
+        dir_dict.pop(base_ip)
+    ip, pn, ipp, ppn = src
+    dir_dict.update({ip: (pn, ipp, ppn)})
+    return dir_dict
 
 
 def get_checking_number(meg: bytes):
@@ -213,7 +222,7 @@ class TcpServer(Server):
     def __init__(self, path: str, addr=None, port=0):
         Server.__init__(self)
         self.path = path
-        self.host_info = (addr, port)
+        self.host_info = (addr, port, None, None)
         self.__is_end = False
 
     def run(self):
@@ -237,8 +246,8 @@ class TcpServer(Server):
         self.__tcp_socket.bind((addr, port))
 
         # save socket information
-        self.host_info = self.__tcp_socket.getsockname()
-
+        ip, pn = self.__tcp_socket.getsockname()
+        self.host_info = (ip, pn, None, None)
         # start to listening
         self.__tcp_socket.listen(2)
 
@@ -278,7 +287,7 @@ class TcpServer(Server):
             data_file = get_ith_mb_from(self.path, name, part)
 
             rsp_data = prepare_response_data(f'{name}_part_{size}', bytearray(data_file))
-            rsp_mes = ResponseData(rsp_data, src_des[SRC], src_des[DES])
+            rsp_mes = ResponseData(rsp_data, src_des[DES], src_des[SRC])
 
             self.__tcp_socket.send(rsp_mes.get_data())
 
@@ -306,12 +315,19 @@ class UdpServer(Server):
     __size_of_message = 1024 * 500
     __udp_socket = None
 
-    def __init__(self, path: str, dir_l: list, addr=None, port=0):
+    def __init__(self, path: str,
+                 dir_dict: dict,
+                 dir_lock: threading.Lock,
+                 ip=None, port=0, tcp_server: TcpServer = None):
+
         Server.__init__(self)
         self.path = path
-        self.host_info = (addr, port)
-        self.dir = dir_l
+        self.dir_dict = dir_dict
+        self.dir_lock = dir_lock
+        self.host_info = (ip, port)
         self.__is_end = False
+
+        self.__tcp_server = tcp_server
 
     def run(self):
         self.__start_server()
@@ -344,32 +360,66 @@ class UdpServer(Server):
                 else:
                     print(OSError)
 
-    def __client_handler(self, command: str, src_des, rec_data: bytes):
+    def __client_handler(self, command: str, src_des: dict, rec_data: bytes):
 
+        # Todo self.host_info is not enough, it needs proxy address
+        check_mes, next_des = is_there_next_des(self.host_info, src_des[DES])
+
+        if check_mes:
+            func = {DownloadData.command: DownloadData,
+                    GetData.command: GetData,
+                    ResponseData.command: ResponseData,
+                    DirectoryData.command: DirectoryData}
+            mes = func[command](rec_data, src_des[SRC], src_des[DES])
+
+            send_message_to(mes, next_des)
+            return
+
+        # get command
         if command == GetData.command:
-
-            # decode name
-            name = rec_data.decode(ENCODE_MODE, ERROR_ENCODING)
-
-            # find next_destination for routing
-            send, next_des = find_next_des(self.host_info, src_des[SRC])
-
-            # is there file
-            if is_there_file(self.path, name):
-
-                # preparing response for sending file
-                rsp = prepare_response_data(NOT_FOUND_RESPONSE_TEXT,
-                                            bytearray(rec_data))
-
-                # send data as an ResponseData
-                send_response_message_to(rsp, src_des[DES], src_des[SRC], next_des)
-
+            self.__handle_get_message(src_des, rec_data)
         elif command == DirectoryData.command:
-            self.dir.append(extract_directory_message(rec_data))
+            self.__handle_directory_message(src_des, rec_data)
         elif command == ResponseData.command:
             pass
-        elif command == DownloadData.command:
-            pass
+
+    def __handle_get_message(self, src_des: dict, rec_data: bytes):
+        # decode name
+        name = rec_data.decode(ENCODE_MODE, ERROR_ENCODING)
+
+        # find next_destination for routing
+        next_des = src_des[SRC]
+
+        # is there file
+        if is_there_file(self.path, name):
+
+            # preparing get response
+            if self.__tcp_server is None:
+                get_rsp = prepare_get_response(name, ('None', 0, 'None', 'None'))
+            else:
+                get_rsp = prepare_get_response(name, self.__tcp_server.host_info)
+
+            # preparing response for sending file
+            rsp = prepare_response_data(FOUND_RESPONSE_TEXT, get_rsp)
+
+            # send data as an ResponseData
+            send_response_message_to(rsp, src_des[DES], src_des[SRC], next_des)
+        else:
+            # preparing response for sending file
+            rsp = prepare_response_data(FOUND_RESPONSE_TEXT, bytearray(0))
+
+            # send data as an ResponseData
+            send_response_message_to(rsp, src_des[DES], src_des[SRC], next_des)
+
+    def __handle_directory_message(self, src_des: dict, rec_data: bytes):
+        new_dir_dict = make_directory_dictionary(rec_data)
+        new_dir_dict = filter_directory_dictionary(self.host_info[0], src_des[SRC], new_dir_dict)
+
+        self.dir_lock.acquire()
+        self.dir_dict.update(new_dir_dict)
+
+        self.dir_dict = update_proxy_of_server(self.dir_dict, self.host_info[0])
+        self.dir_lock.release()
 
 
 class Message:
@@ -501,7 +551,8 @@ class File:
         return __f
 
     def __str__(self):
-        pass  # todo complete str of class file
+        # todo complete str of class file
+        pass
 
 
 class Node:
@@ -698,7 +749,7 @@ def extract_check_number(data_str: bytes):
     return chk_n, raw_data
 
 
-def find_next_des(base: tuple, des: tuple):
+def is_there_next_des(base: tuple, des: tuple):
     base_ip, base_pn, base_ipp, base_ppn = base
     des_ip, des_pn, des_ipp, des_ppn = des
 
@@ -710,3 +761,12 @@ def find_next_des(base: tuple, des: tuple):
         return True, (des_ip, des_pn)
     elif not des_ipp == base_ipp:
         return True, (des_ipp, des_ppn)
+
+
+def update_proxy_of_server(dir_dict: dict, node_ip: str):
+    host = socket.gethostbyname(socket.gethostname())
+    if dir_dict.__contains__(host) and dir_dict.__contains__(node_ip):
+        pn = dir_dict[node_ip][0]
+        dir_dict.update([(node_ip, (pn, host[0], host[1]))])
+    return dir_dict
+
