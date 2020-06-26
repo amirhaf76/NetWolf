@@ -119,7 +119,7 @@ def extract_message(skt: socket.socket):
 
 
 def extract_udp_message(skt: socket.socket):
-    buff = bytearray(skt.recv(1024*2))
+    buff = bytearray(skt.recv(500*100))
 
     start = 0
     end = CMD_MESSAGE_LENGTH

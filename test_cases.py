@@ -6,7 +6,6 @@ import threading
 from time import sleep
 from math import ceil
 
-
 LIST_TEST_PATH = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Test']
 LIST_BASE_FILES_PATH = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Files_for_testing']
 TEST_PATH = f'{os.sep}'.join(LIST_TEST_PATH)
@@ -127,13 +126,13 @@ class TestFunctions(ut.TestCase):
     test_address_src_des_dict = {nfb.SRC: ('amir', 232, 'io3232', 54645), nfb.DES: ('ali', 545, None, None)}
 
     def test_get_size_of_file(self):
-        size = ceil(7902383/(10**6))
+        size = ceil(7902383 / (10 ** 6))
         file_size = nfb.get_byte_size_of_file(BASE_FILES_PATH, 'Awaken.mp3')
         self.assertEqual(size, file_size, msg='Error in test_get_size_of_file')
 
     def test_get_ith_mb_from(self):
         name = 'download'
-        path = TEST_PATH+os.sep+self.test_get_ith_mb_from.__name__
+        path = TEST_PATH + os.sep + self.test_get_ith_mb_from.__name__
 
         des = nfb.File(name, path)
 
@@ -171,11 +170,11 @@ class TestFunctions(ut.TestCase):
         test_list = nfb.extract_address_port_format(self.test_address_encoded)
         self.assertListEqual(test_list, self.test_address_list)
 
-    def test_dsf(self):
+    def test_extract_source_and_destination(self):
         test_dict = nfb.extract_source_and_destination(bytearray(self.test_address_encoded))
         self.assertDictEqual(test_dict, self.test_address_src_des_dict)
 
-    def test_extract_directory_message(self):
+    def test_make_directory_dictionary(self):
 
         temp = (self.test_address_str.encode('utf-8', 'ignore'))
         temp_res = nfb.make_directory_dictionary(temp)
@@ -206,6 +205,21 @@ class TestFunctions(ut.TestCase):
         mes = nfb.prepare_directory_message(test)
         self.assertEqual(mes, test_str)
 
+    def test_extract_response_data(self):
+        test_mes = b'\x06\x02<TEST>\x12\x34'
+        txt, raw_data = nfb.extract_response_data(bytearray(test_mes))
+        self.assertEqual(txt, '<TEST>')
+        self.assertEqual(raw_data, b'\x12\x34')
+
+    def test_prepare_response_data(self):
+        test_txt = '<TEST>'
+        test_data = bytearray(b'\x12\x34')
+        test_message = nfb.prepare_response_data(test_txt, test_data)
+
+        test_data = b'\x06\x02<TEST>\x12\x34'
+
+        self.assertEqual(test_message, test_data)
+
 
 class TestSocketFunction(ut.TestCase):
     address = socket.gethostbyname(socket.gethostname())
@@ -226,14 +240,13 @@ class TestSocketFunction(ut.TestCase):
     test_message = None
 
     def initialize(self):
-
         self.tcp_server.bind((self.address, self.tcp_server_port))
         # self.tcp_server.bind(('', self.tcp_client_port))
         self.udp_server.bind((self.address, self.udp_server_port))
         # self.udp_server.bind((self.address, self.udp_client_port))
 
-        self.test_message = nfb.prepare_response_data(self.test_txt, self.test_data)
-        self.test_message = nfb.ResponseData(self.test_message,
+        temp_mes = nfb.prepare_response_data(self.test_txt, self.test_data)
+        self.test_message = nfb.ResponseData(temp_mes,
                                              self.test_address_list[0],
                                              self.test_address_list[1])
 
@@ -241,9 +254,8 @@ class TestSocketFunction(ut.TestCase):
         self.initialize()
 
     def test_extract_message(self):
-
         self.initialize()
-        s_data = self.test_message.get_data() + bytearray(1024*2 - len(self.test_message.get_data()))
+        s_data = self.test_message.get_data() + bytearray(500*100 - len(self.test_message.get_data()))
         self.udp_client.sendto(s_data,
                                (self.address,
                                 self.udp_server_port))
