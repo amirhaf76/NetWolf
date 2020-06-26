@@ -2,6 +2,7 @@ import netwolf_lib as nfb
 import unittest as ut
 import os
 import socket
+import threading
 from time import sleep
 from math import ceil
 
@@ -43,7 +44,7 @@ class TestTcpServer(ut.TestCase):
 class TestUdpServer(ut.TestCase):
 
     def test_start_and_stop(self):
-        udp = nfb.UdpServer(TEST_PATH, [], IP, 4433)
+        udp = nfb.UdpServer(TEST_PATH, {}, threading.Lock(), IP, 4433)
         udp.start()
         sleep(2)
         udp.stop()
@@ -83,6 +84,8 @@ class TestAllKindMessage(ut.TestCase):
     """
     test all kind of messages
     """
+    src = ('127.0.0.5', 2000, '192.168.0.2', 5000)
+    des = ('127.0.0.5', 2000, '192.168.0.2', 5000)
 
     def test_messages(self):
         self.test_dir_message()
@@ -91,27 +94,37 @@ class TestAllKindMessage(ut.TestCase):
 
     def test_get_message(self):
         arr = bytearray(list(range(0, 200)))
-        mes = nfb.GetData(None, None, None)
-        res = mes.get_message_data()
-        res = res[(1+len(mes.command) + 1):]
+        mes = nfb.GetData(arr, self.src, self.des)
+        res = mes.get_data()
+        res = res[(len(mes.command) + len(self.src) + len(self.des) + 5):]
         self.assertListEqual([res], [res])
+        self.assertEqual(mes.command, nfb.GetData.command)
 
     def test_dir_message(self):
         arr = bytearray(list(range(0, 200)))
-        mes = nfb.DirectoryData(None, None, None)
-        res = mes.get_message_data()
-        res = res[(1+len(mes.command) + 1):]
+        mes = nfb.DirectoryData(arr, self.src, self.des)
+        res = mes.get_data()
+        res = res[(len(mes.command) + len(self.src) + len(self.des) + 5):]
         self.assertListEqual([res], [res])
+        self.assertEqual(mes.command, nfb.DirectoryData.command)
 
     def test_res_message(self):
         arr = bytearray(list(range(0, 200)))
-        mes = nfb.ResponseData(None, None, None)
-        res = mes.get_message_data()
-        res = res[(1+len(mes.command) + 1):]
+        mes = nfb.ResponseData(arr, self.src, self.des)
+        res = mes.get_data()
+        res = res[(len(mes.command) + len(self.src) + len(self.des) + 5):]
         self.assertListEqual([res], [res])
+        self.assertEqual(mes.command, nfb.ResponseData.command)
 
 
 class TestFunctions(ut.TestCase):
+    test_address_dict = {'amir': (232, 'io3232', 54645), 'ali': (545, None, None)}
+    test_address_list = [('amir', 232, 'io3232', 54645), ('ali', 545, None, None)]
+    test_address_str = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
+    test_address_encoded = test_address_str.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
+    test_src_des_str = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
+    test_src_des_encoded = test_src_des_str.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
+    test_address_src_des_dict = {nfb.SRC: ('amir', 232, 'io3232', 54645), nfb.DES: ('ali', 545, None, None)}
 
     def test_get_size_of_file(self):
         size = ceil(7902383/(10**6))
@@ -154,21 +167,27 @@ class TestFunctions(ut.TestCase):
                                        BASE_FILES_PATH,
                                        TEST_FILE_NAME['MUSIC']))
 
-    def test_extract_directory_message(self):
-        test = {'amir': (232, 'io3232', 54645), 'ali': (545, None, None)}
+    def test_extract_address_port_format(self):
+        test_list = nfb.extract_address_port_format(self.test_address_encoded)
+        self.assertListEqual(test_list, self.test_address_list)
 
-        test_list = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
-        temp = (test_list.encode('utf-8', 'ignore'))
+    def test_dsf(self):
+        test_dict = nfb.extract_source_and_destination(bytearray(self.test_address_encoded))
+        self.assertDictEqual(test_dict, self.test_address_src_des_dict)
+
+    def test_extract_directory_message(self):
+
+        temp = (self.test_address_str.encode('utf-8', 'ignore'))
         temp_res = nfb.make_directory_dictionary(temp)
 
-        self.assertDictEqual(temp_res, test)
+        self.assertDictEqual(temp_res, self.test_address_dict)
 
         test_list = " 'amir' , 232, 'io3232', 546,45 | 'ali', 545, 'None', 'None'"
         temp = (test_list.encode('utf-8', 'ignore'))
 
         try:
             temp_res = nfb.make_directory_dictionary(temp)
-            self.assertNotEqual(temp_res, test)
+            self.assertNotEqual(temp_res, self.test_address_dict)
         except nfb.NotMatchFormat:
             pass
 
@@ -186,3 +205,53 @@ class TestFunctions(ut.TestCase):
         )
         mes = nfb.prepare_directory_message(test)
         self.assertEqual(mes, test_str)
+
+
+class TestSocketFunction(ut.TestCase):
+    address = socket.gethostbyname(socket.gethostname())
+    tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_server_port = 4000
+    tcp_client_port = 0
+    udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_server_port = 6000
+    udp_client_port = 0
+
+    test_address_list = [('amir', 232, 'io3232', 54645), ('ali', 545, None, None)]
+    test_address_src_des_dict = {nfb.SRC: ('amir', 232, 'io3232', 54645), nfb.DES: ('ali', 545, None, None)}
+
+    test_txt = '<TEST>'
+    test_data = bytearray(b'\x12\x34')
+    test_message = None
+
+    def initialize(self):
+
+        self.tcp_server.bind((self.address, self.tcp_server_port))
+        # self.tcp_server.bind(('', self.tcp_client_port))
+        self.udp_server.bind((self.address, self.udp_server_port))
+        # self.udp_server.bind((self.address, self.udp_client_port))
+
+        self.test_message = nfb.prepare_response_data(self.test_txt, self.test_data)
+        self.test_message = nfb.ResponseData(self.test_message,
+                                             self.test_address_list[0],
+                                             self.test_address_list[1])
+
+    def test_initialize(self):
+        self.initialize()
+
+    def test_extract_message(self):
+
+        self.initialize()
+        s_data = self.test_message.get_data() + bytearray(1024*2 - len(self.test_message.get_data()))
+        self.udp_client.sendto(s_data,
+                               (self.address,
+                                self.udp_server_port))
+
+        command, src_des, raw_data = nfb.extract_udp_message(self.udp_server)
+        self.assertEqual(command, nfb.ResponseData.command)
+        self.assertDictEqual(src_des, self.test_address_src_des_dict)
+
+        txt, b_data = nfb.extract_response_data(raw_data)
+        self.assertEqual(txt, self.test_txt)
+        self.assertEqual(b_data, self.test_data)

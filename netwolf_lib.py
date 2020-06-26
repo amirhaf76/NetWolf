@@ -21,12 +21,14 @@ SENDING_WAS_FINISHED = '<SWF>'
 
 BRIDGE_SIZE_READ = 5
 BRIDGE_CLOSE = '<BRIDGE_CLOSE>'
-BRIDGE_MAKE = '<BRIDGE_MAKE'
+BRIDGE_MAKE = '<BRIDGE_MAKE>'
 
 
 # functions
 def new_name_file(name: str, path: str):
     index = 0
+
+    # Todo os.listdir raise execption FileNotFound
     while name in os.listdir(path):
         index += 1
         if index == 1:
@@ -64,7 +66,7 @@ def get_ith_mb_from(path: str, name: str, number: int):
 
 def extract_address_port_format(raw_data: bytes):
     """
-
+    getting list of addresses in (ip, pn, ipp, ppm)
     :param raw_data: bytes of data which have certain format as ...|(ip, pn, ipp, ppn)|...
     :return: List of tuple which include 4 element. (ip, pn, ipp, ppn)
     """
@@ -113,6 +115,31 @@ def extract_message(skt: socket.socket):
     addr = extract_source_and_destination(bytearray(skt.recv(addr_siz)))
     data = skt.recv(data_siz)
 
+    return command, addr, bytearray(data)
+
+
+def extract_udp_message(skt: socket.socket):
+    buff = bytearray(skt.recv(1024*2))
+
+    start = 0
+    end = CMD_MESSAGE_LENGTH
+    command_siz = int.from_bytes(buff[start:end], 'big', signed=False)
+    start = end
+    end += ADDR_MESSAGE_LENGTH
+    addr_siz = int.from_bytes(buff[start:end], 'big', signed=False)
+    start = end
+    end += DATA_MESSAGE_LENGTH
+    data_siz = int.from_bytes(buff[start:end], 'big', signed=False)
+
+    start = end
+    end += command_siz
+    command = buff[start:end].decode(ENCODE_MODE, ERROR_ENCODING)
+    start = end
+    end += addr_siz
+    addr = extract_source_and_destination(bytearray(buff[start:end]))
+    start = end
+    end += data_siz
+    data = buff[start:end]
     return command, addr, bytearray(data)
 
 
@@ -170,7 +197,7 @@ def get_byte_size_of_file(path: str, name: str):
 
         return size
     else:
-        return None
+        return -1
 
 
 def assemble_files(path: str, name: str, new_path: str, new_name: str):
@@ -216,8 +243,6 @@ class Server(threading.Thread):
 
 
 class TcpServer(Server):
-    __ENCODE_MODE = 'utf-8'
-    __ERROR_ENCODING = 'backslashreplace'
     __pool = ThreadPoolExecutor(max_workers=5)
     __tcp_socket = None
 
@@ -517,38 +542,40 @@ class Message:
 
 
 class GetData(Message):
+    command = 'GET'
 
     def __init__(self, get_data: bytearray, src: tuple, des: tuple):
         Message.__init__(self, get_data, src, des)
-        self.command = 'GET'
 
 
 class DownloadData(Message):
+    command = 'DOWNLOAD'
 
     def __init__(self, dwn_data: bytearray, src: tuple, des: tuple):
         Message.__init__(self, dwn_data, src, des)
-        self.command = 'DOWNLOAD'
 
 
 class ResponseData(Message):
+    command = 'RSP'
 
     def __init__(self, rsp_data: bytearray, src: tuple, des: tuple):
         Message.__init__(self, rsp_data, src, des)
-        self.command = 'RSP'
 
 
 class DirectoryData(Message):
     # todo complete directory data, it needs to define its format
+    command = 'DIR'
+
     def __init__(self, dir_data: bytearray, src: tuple, des: tuple):
         Message.__init__(self, dir_data, src, des)
-        self.command = 'DIR'
 
 
 class BridgeData(Message):
     # todo complete directory data, it needs to define its format
+    command = 'BRG'
+
     def __init__(self, brg_data: bytearray, src: tuple, des: tuple):
         Message.__init__(self, brg_data, src, des)
-        self.command = 'BRG'
 
 
 def reassemble_mes(command, src_des, raw_data):
@@ -614,7 +641,7 @@ class File:
 
 
 class Node:
-    node_list = list()
+    node_list = {}
 
     def __init__(self, name: str, ip: str, path: str):
         self.name = name
@@ -796,15 +823,15 @@ def extract_download_data(raw_data: bytearray):
 def extract_response_data(raw_data: bytearray):
     rsp_txt_size = raw_data[0]
     # rsp_data_size = raw_data[1]
-    rsp_txt = raw_data[2:rsp_txt_size + 1].decode(ENCODE_MODE, ERROR_ENCODING)
-    rsp_data = raw_data[rsp_txt_size + 1:]
+    rsp_txt = raw_data[2:(rsp_txt_size + 2)].decode(ENCODE_MODE, ERROR_ENCODING)
+    rsp_data = raw_data[rsp_txt_size + 2:]
     return rsp_txt, rsp_data
 
 
 def extract_get_response_data(raw_data: bytearray):
     rsp_name_size = raw_data[0]
-    rsp_name = raw_data[2:rsp_name_size+1].decode(ENCODE_MODE, ERROR_ENCODING)
-    rsp_addr = extract_address_port_format(raw_data[rsp_name_size+1:])
+    rsp_name = raw_data[2:rsp_name_size+2].decode(ENCODE_MODE, ERROR_ENCODING)
+    rsp_addr = extract_address_port_format(raw_data[rsp_name_size+2:])
     return rsp_name, rsp_addr[0]
 
 
