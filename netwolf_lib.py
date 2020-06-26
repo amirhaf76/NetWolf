@@ -6,10 +6,18 @@ from math import ceil
 
 ENCODE_MODE = 'utf-8'
 ERROR_ENCODING = 'backslashreplace'
+
 ADDR_MESSAGE_LENGTH = 1
 CMD_MESSAGE_LENGTH = 1
 DATA_MESSAGE_LENGTH = 3
 DATA_MESSAGE_ORDER = 'big'
+
+DES = 'DES'
+SRC = 'SRC'
+
+NOT_FOUND_RESPONSE_TEXT = '<NOT FOUND>'
+
+BRIDGE_SIZE_READ = 5
 
 
 # functions
@@ -77,15 +85,31 @@ def extract_address_port_format(raw_data: bytes):
 
             res.append(temp_tuple)
         else:
-            print("not found")
+            pass
+            # Todo need exception
     return res
 
 
 def extract_source_and_destination(raw_data: bytearray):
-    src_des = extract_address_port_format(raw_data)
-    dict_src_dec = {'src': src_des[0],
-                    'des': src_des[1]}
-    return dict_src_dec
+    if not len(raw_data) == 0:
+        src_des = extract_address_port_format(raw_data)
+        dict_src_dec = {SRC: src_des[0],
+                        DES: src_des[1]}
+        return dict_src_dec
+    return {SRC: None, DES: None}
+
+
+def extract_message(skt: socket.socket):
+    command_siz = int.from_bytes(skt.recv(CMD_MESSAGE_LENGTH), 'big', signed=False)
+    addr_siz = int.from_bytes(skt.recv(ADDR_MESSAGE_LENGTH), 'big', signed=False)
+    data_siz = int.from_bytes(skt.recv(DATA_MESSAGE_LENGTH), 'big', signed=False)
+
+    command = skt.recv(command_siz).decode(ENCODE_MODE, ERROR_ENCODING)
+
+    addr = extract_source_and_destination(bytearray(skt.recv(addr_siz)))
+    data = skt.recv(data_siz)
+
+    return command, addr, bytearray(data)
 
 
 def extract_directory_message(dir_mes: bytes):
@@ -103,20 +127,6 @@ def extract_directory_message(dir_mes: bytes):
     return dict(dir_list)
 
 
-def extract_message(skt: socket.socket):
-    command_siz = int.from_bytes(skt.recv(CMD_MESSAGE_LENGTH), 'big', signed=False)
-    addr_siz = int.from_bytes(skt.recv(ADDR_MESSAGE_LENGTH), 'big', signed=False)
-    data_siz = int.from_bytes(skt.recv(DATA_MESSAGE_LENGTH), 'big', signed=False)
-
-    command = skt.recv(command_siz).decode(ENCODE_MODE, ERROR_ENCODING)
-    addr = None
-    if not addr_siz == 0:
-        addr = extract_source_and_destination(bytearray(skt.recv(addr_siz)))
-    data = skt.recv(data_siz)
-
-    return command, addr, bytearray(data)
-
-
 def get_checking_number(meg: bytes):
     meg = meg.decode(ENCODE_MODE, ERROR_ENCODING)
     half = len(meg) // 2
@@ -132,7 +142,7 @@ def is_there_file(path: str, name: str):
     return name in os.listdir(path)
 
 
-def get_size_of_file(path: str, name: str):
+def get_byte_size_of_file(path: str, name: str):
     """
     get size of file in MB
     :param path: path of file
@@ -248,32 +258,47 @@ class TcpServer(Server):
     def __client_handler(self, skt: socket.socket):
         command, src_des, raw_data = extract_message(skt)
 
+        # ip, pn, ipp, ppn = src_des[DES]
+
         if command == DownloadData.command:
             name = extract_download_data(raw_data)
             if is_there_file(self.path, name):
-                self.__send(skt, name, src_des)
+                self.__send(name, src_des)
             else:
-                self.__response_not_found(skt, name)
+                self.__response_not_found(name)
+
         skt.close()
 
-    def __send(self, skt: socket.socket, name: str, src_des):
+    def __send(self, name: str, src_des: dict):
 
-        size = get_size_of_file(self.path, name)
+        size = get_byte_size_of_file(self.path, name)
+
         for part in range(size):
             # use get_ith_mb_from function
             data_file = get_ith_mb_from(self.path, name, part)
+
             rsp_data = prepare_response_data(f'{name}_part_{size}', bytearray(data_file))
-            rsp_mes = ResponseData(rsp_data, src_des[0], src_des[1])
-            # skt.send
+            rsp_mes = ResponseData(rsp_data, src_des[SRC], src_des[DES])
+
+            self.__tcp_socket.send(rsp_mes.get_data())
 
         # send final response
-        rsp_done = prepare_response_data(f'done_{name}', bytearray(0))
-        skt.send(ResponseData(rsp_done).get_data())
+        self.__response_done(name, src_des)
 
-    def __response_not_found(self, skt: socket.socket, name):
-        data_res = bytearray(f'not found {name}', self.__ENCODE_MODE, self.__ERROR_ENCODING)
-        resp_nf = ResponseData(data_res).get_data()
-        skt.send(resp_nf)
+    def __response_not_found(self, name):
+        pass
+
+    def __response_done(self, name, src_des: dict):
+        rsp_done = prepare_response_data(f'done_{name}', bytearray(0))
+        self.__tcp_socket.send(ResponseData(rsp_done, src_des[SRC], src_des[DES]).get_data())
+
+    # def __send_straight(self, command: str, src_des: dict, raw_data: bytearray):
+    #     if command == DownloadData.command:
+    #         name = extract_download_data(raw_data)
+    #         if is_there_file(self.path, name):
+    #             self.__send(name, src_des)
+    #         else:
+    #             self.__response_not_found(name)
 
 
 class UdpServer(Server):
@@ -308,30 +333,52 @@ class UdpServer(Server):
         print('[UDP Server] Server has been started')
         print('[UDP Server] IP:{} port number:{} path:{}'.
               format(self.host_info[0], self.host_info[1], self.path))
+
         while not self.__is_end:
             try:
-                command, rec_data, dest = extract_message(self.__udp_socket, getaddr=True)
-                self.__client_handler(command, rec_data, dest)
+                command, src_des, rec_data = extract_message(self.__udp_socket)
+                self.__client_handler(command, src_des, rec_data)
             except OSError:
                 if self.__is_end:
                     print('[UDP Server] Server stop manually')
                 else:
                     print(OSError)
 
-    def __client_handler(self, command: str, rec_data: bytes, dest: str):
-        check_n, raw_data = extract_check_number(rec_data)
-        if check_n == get_checking_number(rec_data):
-            if command == DirectoryData.command:
-                self.dir.append(extract_directory_message(raw_data))
+    def __client_handler(self, command: str, src_des, rec_data: bytes):
+
+        if command == GetData.command:
+
+            # decode name
+            name = rec_data.decode(ENCODE_MODE, ERROR_ENCODING)
+
+            # find next_destination for routing
+            send, next_des = find_next_des(self.host_info, src_des[SRC])
+
+            # is there file
+            if is_there_file(self.path, name):
+
+                # preparing response for sending file
+                rsp = prepare_response_data(NOT_FOUND_RESPONSE_TEXT,
+                                            bytearray(rec_data))
+
+                # send data as an ResponseData
+                send_response_message_to(rsp, src_des[DES], src_des[SRC], next_des)
+
+        elif command == DirectoryData.command:
+            self.dir.append(extract_directory_message(rec_data))
+        elif command == ResponseData.command:
+            pass
+        elif command == DownloadData.command:
+            pass
 
 
 class Message:
     command = '<command>'
 
-    def __init__(self, message_data: bytearray, server_info: tuple = None, proxy_server_info: tuple = None):
+    def __init__(self, message_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
         self.message_data = message_data
-        self.server_info = server_info
-        self.proxy_server_info = proxy_server_info
+        self.src_server_info = src_server_info
+        self.des_server_info = des_server_info
 
     def get_data(self):
         """
@@ -343,12 +390,16 @@ class Message:
         size of command - size of addresses - size of data -     command      -    addresses       -     data
              1B         -      1B           -      3B      - size of commandB - size of addressesB - size of dataB
         """
-        temp = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.server_info[0],
-                                                 pn=self.server_info[1],
-                                                 ipp=self.proxy_server_info[0],
-                                                 ppn=self.proxy_server_info[1])
+        temp1 = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.src_server_info[0],
+                                                  pn=self.src_server_info[1],
+                                                  ipp=self.src_server_info[2],
+                                                  ppn=self.src_server_info[3])
+        temp2 = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.des_server_info[0],
+                                                  pn=self.des_server_info[1],
+                                                  ipp=self.des_server_info[2],
+                                                  ppn=self.des_server_info[3])
         command = bytearray(self.command, ENCODE_MODE, ERROR_ENCODING)
-        servers_info = bytearray(temp, ENCODE_MODE, ERROR_ENCODING)
+        servers_info = bytearray('|'.join((temp1, temp2)), ENCODE_MODE, ERROR_ENCODING)
 
         # size of command - size of addresses 2Bytes
         packet = bytearray([len(command), len(servers_info)])
@@ -362,12 +413,16 @@ class Message:
         return packet
 
     def __str__(self):
-        temp = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.server_info[0],
-                                                 pn=self.server_info[1],
-                                                 ipp=self.proxy_server_info[0],
-                                                 ppn=self.proxy_server_info[1])
+        temp1 = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.src_server_info[0],
+                                                  pn=self.src_server_info[1],
+                                                  ipp=self.src_server_info[2],
+                                                  ppn=self.src_server_info[3])
+        temp2 = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.des_server_info[0],
+                                                  pn=self.des_server_info[1],
+                                                  ipp=self.des_server_info[2],
+                                                  ppn=self.des_server_info[3])
         command = bytearray(self.command, ENCODE_MODE, ERROR_ENCODING)
-        servers_info = bytearray(temp, ENCODE_MODE, ERROR_ENCODING)
+        servers_info = bytearray('|'.join((temp1, temp2)), ENCODE_MODE, ERROR_ENCODING)
         return 'size:\n' \
                '      command: {sc}\n' \
                '    addresses: {sa}\n' \
@@ -381,38 +436,42 @@ class Message:
                                             sa=len(servers_info),
                                             sd=len(self.message_data),
                                             ic=self.command,
-                                            ias='{},{}'.format(self.server_info[0],
-                                                               self.server_info[1]),
-                                            iad='{},{}'.format(self.proxy_server_info[0],
-                                                               self.proxy_server_info[1]),
+                                            ias='{},{},{},{}'.format(self.src_server_info[0],
+                                                                     self.src_server_info[1],
+                                                                     self.src_server_info[2],
+                                                                     self.src_server_info[3]),
+                                            iad='{},{},{},{}'.format(self.des_server_info[0],
+                                                                     self.des_server_info[1],
+                                                                     self.des_server_info[2],
+                                                                     self.des_server_info[3]),
                                             id=self.message_data)
 
 
 class GetData(Message):
 
-    def __init__(self, get_data: bytearray, server_info: tuple = None, proxy_server_info: tuple = None):
-        Message.__init__(self, get_data, server_info, proxy_server_info)
+    def __init__(self, get_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
+        Message.__init__(self, get_data, src_server_info, des_server_info)
         self.command = 'GET'
 
 
 class DownloadData(Message):
 
-    def __init__(self, dwn_data: bytearray, server_info: tuple = None, proxy_server_info: tuple = None):
-        Message.__init__(self, dwn_data, server_info, proxy_server_info)
+    def __init__(self, dwn_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
+        Message.__init__(self, dwn_data, src_server_info, des_server_info)
         self.command = 'DOWNLOAD'
 
 
 class ResponseData(Message):
 
-    def __init__(self, res_data: bytearray, server_info: tuple = None, proxy_server_info: tuple = None):
-        Message.__init__(self, res_data, server_info, proxy_server_info)
+    def __init__(self, res_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
+        Message.__init__(self, res_data, src_server_info, des_server_info)
         self.command = 'RSP'
 
 
 class DirectoryData(Message):
     # todo complete directory data, it needs to define its format
-    def __init__(self, dir_data: bytearray, server_info: tuple = None, proxy_server_info: tuple = None):
-        Message.__init__(self, dir_data, server_info, proxy_server_info)
+    def __init__(self, dir_data: bytearray, src_server_info: tuple = None, des_server_info: tuple = None):
+        Message.__init__(self, dir_data, src_server_info, des_server_info)
         self.command = 'DIR'
 
 
@@ -515,6 +574,12 @@ class NetWolf:
         return "Net wolf < version 1>"
 
 
+class NotMatchFormat(Exception):
+
+    def __str__(self):
+        print('Format was not matched')
+
+
 # end of classes
 
 def prepare_directory_message(addr_dict: dict):
@@ -552,42 +617,50 @@ def prepare_response_data(rsp_txt: str, rsp_raw_data: bytearray):
     return bytearray([rsp_txt_size, rsp_raw_data_size]) + rsp_txt + rsp_raw_data
 
 
-def send_message_to(mes: Message):
+def prepare_get_response(name: str, tcp_server_addr: tuple):
+    get_name = bytearray(name, ENCODE_MODE, ERROR_ENCODING)
+    get_name_size = len(get_name)
+    ip, pn, ipp, ppn = tcp_server_addr
+    get_addr = f'{ip},{pn},{ipp},{ppn}'
+    get_addr = bytearray(get_addr, ENCODE_MODE, ERROR_ENCODING)
+    get_addr_size = len(get_addr)
+    return bytearray([get_name_size, get_addr_size]) + get_name + get_addr
+
+
+def send_message_to(mes: Message, next_des: tuple):
     skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    if mes.proxy_server_info is None:
-        skt.sendto(mes.get_data(), mes.server_info)
-    else:
-        skt.sendto(mes.get_data(), mes.proxy_server_info)
+    skt.sendto(mes.get_data(), next_des)
 
 
-def send_message_to_get_file(name: str, server_info: tuple, proxy_server_info: tuple = None):
+def send_message_to_get_file(name: str, src_server: tuple, des_server: tuple, next_des: tuple):
     mes = GetData(bytearray(name, ENCODE_MODE, ERROR_ENCODING),
-                  server_info,
-                  proxy_server_info)
-    send_message_to(mes)
+                  src_server,
+                  des_server)
+    send_message_to(mes, next_des)
 
 
-def send_directory_message_to(dir_dict: dict, server_info: tuple, proxy_server_info: tuple = None):
+def send_directory_message_to(dir_dict: dict, src_server: tuple, des_server: tuple, next_des: tuple):
     mes = prepare_directory_message(dir_dict)
     mes_data = DirectoryData(bytearray(mes, ENCODE_MODE, ERROR_ENCODING),
-                             server_info,
-                             proxy_server_info)
-    send_message_to(mes_data)
+                             src_server,
+                             des_server)
+    send_message_to(mes_data, next_des)
 
 
-def send_response_message_to(rsp: bytearray, server_info: tuple, proxy_server_info: tuple = None):
+def send_response_message_to(rsp: bytearray, src_server: tuple, des_server: tuple, next_des: tuple):
     resp_data = ResponseData(rsp,
-                             server_info,
-                             proxy_server_info)
-    send_message_to(resp_data)
+                             src_server,
+                             des_server)
+    send_message_to(resp_data, next_des)
 
 
-def download_file_from(name: str, server_info: tuple, proxy_server_info: tuple = None):
+def download_file_from(name: str, src: tuple, des: tuple, base: tuple):
+    receiver = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
     raw_data = bytearray([len(name)]) + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
     download_mes = DownloadData(raw_data,
-                                server_info,
-                                proxy_server_info)
-    send_message_to(download_mes)
+                                src,
+                                des)
 
 
 def extract_download_data(raw_data: bytearray):
@@ -604,6 +677,13 @@ def extract_response_data(raw_data: bytearray):
     return rsp_txt, rsp_data
 
 
+def extract_get_response_data(raw_data: bytearray):
+    rsp_name_size = raw_data[0]
+    rsp_name = raw_data[2:rsp_name_size+1].decode(ENCODE_MODE, ERROR_ENCODING)
+    rsp_addr = extract_address_port_format(raw_data[rsp_name_size+1:])
+    return rsp_name, rsp_addr[0]
+
+
 def extract_check_number(data_str: bytes):
     """
     1B size of check number, read check number's bytes,
@@ -616,3 +696,17 @@ def extract_check_number(data_str: bytes):
     raw_data = data_str[chk_number_size:]
 
     return chk_n, raw_data
+
+
+def find_next_des(base: tuple, des: tuple):
+    base_ip, base_pn, base_ipp, base_ppn = base
+    des_ip, des_pn, des_ipp, des_ppn = des
+
+    if base_ip == des_ip:
+        return False, (base_ip, base_pn)
+    elif des_ipp is None:
+        return True, (des_ip, des_pn)
+    elif des_ipp == base_ipp:
+        return True, (des_ip, des_pn)
+    elif not des_ipp == base_ipp:
+        return True, (des_ipp, des_ppn)
