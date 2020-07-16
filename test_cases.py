@@ -83,8 +83,8 @@ class TestAllKindMessage(ut.TestCase):
     """
     test all kind of messages
     """
-    src = ('127.0.0.5', 2000, '192.168.0.2', 5000)
-    des = ('127.0.0.5', 2000, '192.168.0.2', 5000)
+    src = nfb.AddressIp('127.0.0.5', 2000, '192.168.0.2', 5000)
+    des = nfb.AddressIp('127.0.0.5', 2000, '192.168.0.2', 5000)
 
     def test_messages(self):
         self.test_dir_message()
@@ -95,7 +95,7 @@ class TestAllKindMessage(ut.TestCase):
         arr = bytearray(list(range(0, 200)))
         mes = nfb.GetData(arr, self.src, self.des)
         res = mes.get_data()
-        res = res[(len(mes.command) + len(self.src) + len(self.des) + 5):]
+        res = res[(len(mes.command) + len(self.src.get_format()) + len(self.des.get_format()) + 5):]
         self.assertListEqual([res], [res])
         self.assertEqual(mes.command, nfb.GetData.command)
 
@@ -103,7 +103,7 @@ class TestAllKindMessage(ut.TestCase):
         arr = bytearray(list(range(0, 200)))
         mes = nfb.DirectoryData(arr, self.src, self.des)
         res = mes.get_data()
-        res = res[(len(mes.command) + len(self.src) + len(self.des) + 5):]
+        res = res[(len(mes.command) + len(self.src.get_format()) + len(self.des.get_format()) + 5):]
         self.assertListEqual([res], [res])
         self.assertEqual(mes.command, nfb.DirectoryData.command)
 
@@ -111,19 +111,22 @@ class TestAllKindMessage(ut.TestCase):
         arr = bytearray(list(range(0, 200)))
         mes = nfb.ResponseData(arr, self.src, self.des)
         res = mes.get_data()
-        res = res[(len(mes.command) + len(self.src) + len(self.des) + 5):]
+        res = res[(len(mes.command) + len(self.src.get_format()) + len(self.des.get_format()) + 5):]
         self.assertListEqual([res], [res])
         self.assertEqual(mes.command, nfb.ResponseData.command)
 
 
 class TestFunctions(ut.TestCase):
-    test_address_dict = {'amir': (232, 'io3232', 54645), 'ali': (545, None, None)}
-    test_address_list = [('amir', 232, 'io3232', 54645), ('ali', 545, None, None)]
+    test_address_dict = {'amir': nfb.AddressIp('amir', 232, 'io3232', 54645),
+                         'ali': nfb.AddressIp('ali', 545, None, None)}
+    test_address_list = [nfb.AddressIp('amir', 232, 'io3232', 54645),
+                         nfb.AddressIp('ali', 545, None, None)]
     test_address_str = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
     test_address_encoded = test_address_str.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
     test_src_des_str = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
     test_src_des_encoded = test_src_des_str.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
-    test_address_src_des_dict = {nfb.SRC: ('amir', 232, 'io3232', 54645), nfb.DES: ('ali', 545, None, None)}
+    test_address_src_des_dict = {nfb.SRC: nfb.AddressIp('amir', 232, 'io3232', 54645),
+                                 nfb.DES: nfb.AddressIp('ali', 545, None, None)}
 
     def test_get_size_of_file(self):
         size = ceil(7902383 / (10 ** 6))
@@ -166,8 +169,8 @@ class TestFunctions(ut.TestCase):
                                        BASE_FILES_PATH,
                                        TEST_FILE_NAME['MUSIC']))
 
-    def test_extract_address_port_format(self):
-        test_list = nfb.extract_address_port_format(self.test_address_encoded)
+    def test_extract_address_ip_format(self):
+        test_list = nfb.extract_address_ip_format(self.test_address_encoded)
         self.assertListEqual(test_list, self.test_address_list)
 
     def test_extract_source_and_destination(self):
@@ -191,7 +194,8 @@ class TestFunctions(ut.TestCase):
             pass
 
     def test_prepare_directory_message(self):
-        test = {'amir': (232, 'io3232', 54645), 'ali': (545, None, None)}
+        test = {'amir': nfb.AddressIp('amir', 232, 'io3232', 54645),
+                'ali': nfb.AddressIp('ali', 545, None, None)}
         test_str = '{ip}, {portNum}, {ipp}, {ppn}|{ip1}, {portNum1}, {ipp1}, {ppn1}'.format(
             ip='amir',
             portNum=232,
@@ -230,7 +234,7 @@ class TestSocketFunction(ut.TestCase):
     udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_server_port = 6000
-    udp_client_port = 0
+    udp_client_port = 6010
 
     test_address_list = [('amir', 232, 'io3232', 54645), ('ali', 545, None, None)]
     test_address_src_des_dict = {nfb.SRC: ('amir', 232, 'io3232', 54645), nfb.DES: ('ali', 545, None, None)}

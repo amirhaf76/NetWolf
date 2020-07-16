@@ -24,6 +24,36 @@ BRIDGE_CLOSE = '<BRIDGE_CLOSE>'
 BRIDGE_MAKE = '<BRIDGE_MAKE>'
 
 
+class AddressIp:
+
+    def __init__(self, ip, pn, proxy_ip, proxy_pn):
+        self.ip = ip
+        self.pn = pn
+        self.proxy_ip = proxy_ip
+        self.proxy_pn = proxy_pn
+
+    def __str__(self):
+        return (f'ip:{self.ip},' +
+                f'pn:{self.pn},' +
+                f'proxy_ip:{self.proxy_ip},' +
+                f'proxy_pn:{self.proxy_pn}')
+
+    def get_format(self):
+        return (f'{self.ip}, ' +
+                f'{self.pn}, ' +
+                f'{self.proxy_ip}, ' +
+                f'{self.proxy_pn}')
+
+    def __eq__(self, o: object) -> bool:
+        if o is None or not o.__class__ == self.__class__:
+            return False
+        thing: AddressIp = o
+        return thing.ip == self.ip and \
+               thing.pn == self.pn and \
+               thing.proxy_ip == self.proxy_ip and \
+               thing.proxy_pn == self.proxy_pn
+
+
 # functions
 def new_name_file(name: str, path: str):
     index = 0
@@ -64,9 +94,9 @@ def get_ith_mb_from(path: str, name: str, number: int):
     return temp
 
 
-def extract_address_port_format(raw_data: bytes):
+def extract_address_ip_format(raw_data: bytes):
     """
-    getting list of addresses in (ip, pn, ipp, ppm)
+    getting list of addresses in AddressIp
     :param raw_data: bytes of data which have certain format as ...|(ip, pn, ipp, ppn)|...
     :return: List of tuple which include 4 element. (ip, pn, ipp, ppn)
     """
@@ -84,12 +114,12 @@ def extract_address_port_format(raw_data: bytes):
             if not temp_list[3].strip(' \'') == 'None':
                 ppn = int(temp_list[3])
 
-            temp_tuple = (temp_list[0].strip(' \''),
-                          int(temp_list[1]),
-                          ipp,
-                          ppn)
+            temp_address_ip = AddressIp(temp_list[0].strip(' \''),
+                                        int(temp_list[1]),
+                                        ipp,
+                                        ppn)
 
-            res.append(temp_tuple)
+            res.append(temp_address_ip)
         else:
             pass
             # Todo need exception
@@ -98,14 +128,14 @@ def extract_address_port_format(raw_data: bytes):
 
 def extract_source_and_destination(raw_data: bytearray):
     if not len(raw_data) == 0:
-        src_des = extract_address_port_format(raw_data)
+        src_des = extract_address_ip_format(raw_data)
         dict_src_dec = {SRC: src_des[0],
                         DES: src_des[1]}
         return dict_src_dec
     return {SRC: None, DES: None}
 
 
-def extract_message(skt: socket.socket):
+def extract_tcp_message(skt: socket.socket):
     command_siz = int.from_bytes(skt.recv(CMD_MESSAGE_LENGTH), 'big', signed=False)
     addr_siz = int.from_bytes(skt.recv(ADDR_MESSAGE_LENGTH), 'big', signed=False)
     data_siz = int.from_bytes(skt.recv(DATA_MESSAGE_LENGTH), 'big', signed=False)
@@ -119,7 +149,7 @@ def extract_message(skt: socket.socket):
 
 
 def extract_udp_message(skt: socket.socket):
-    buff = bytearray(skt.recv(500*100))
+    buff = bytearray(skt.recv(500 * 100))
 
     start = 0
     end = CMD_MESSAGE_LENGTH
@@ -150,19 +180,18 @@ def make_directory_dictionary(dir_dict: bytes):
     its format is " ... |ip, portNumber, ipProxy, proxy port number| ... "
     :return: dict
     """
-    addr = extract_address_port_format(dir_dict)
+    addr = extract_address_ip_format(dir_dict)
     dir_list = []
-    for ip, pn, ipp, ppn in addr:
-        dir_list.append((ip, (pn, ipp, ppn)))
+    for addr_ip in addr:
+        dir_list.append((addr_ip.ip, addr_ip))
 
     return dict(dir_list)
 
 
-def filter_directory_dictionary(base_ip: str, src: tuple, dir_dict: dict):
-    if dir_dict.__contains__(base_ip):
-        dir_dict.pop(base_ip)
-    ip, pn, ipp, ppn = src
-    dir_dict.update({ip: (pn, ipp, ppn)})
+def filter_directory_dictionary(base_address_ip: AddressIp, src: AddressIp, dir_dict: dict):
+    if dir_dict.__contains__(base_address_ip.ip):
+        dir_dict.pop(base_address_ip)
+    dir_dict.update({src.ip: src})
     return dir_dict
 
 
@@ -293,7 +322,7 @@ class TcpServer(Server):
                     print(OSError)
 
     def __client_handler(self, skt: socket.socket):
-        command, src_des, raw_data = extract_message(skt)
+        command, src_des, raw_data = extract_tcp_message(skt)
 
         # ip, pn, ipp, ppn = src_des[DES]
 
@@ -305,30 +334,6 @@ class TcpServer(Server):
                 self.__response_not_found(name)
 
         skt.close()
-
-    def __handle_bridge(self, in_skt: socket.socket, command: str, src_des: dict, raw_data: bytearray):
-
-        check_mes, next_des = is_there_next_des(self.host_info, src_des[DES])
-
-        if check_mes:
-            out_skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            out_skt.connect(next_des)
-
-            out_skt.send(reassemble_mes(command, src_des, raw_data).get_data())
-
-            command, src_des, raw_data = extract_message(in_skt)
-            out_skt.send(reassemble_mes(command, src_des, raw_data).get_data())
-
-            bridge = BridgeConnection(in_skt, out_skt)
-            bridge.start()
-        else:
-            command, src_des, raw_data = extract_message(in_skt)
-            if command == DownloadData.command:
-                name = extract_download_data(raw_data)
-                if is_there_file(self.path, name):
-                    self.__send(name, src_des[DES], src_des[SRC])
-                else:
-                    self.__response_not_found(name)
 
     def __send(self, name: str, src: tuple, des: tuple):
 
@@ -396,7 +401,7 @@ class UdpServer(Server):
 
         while not self.__is_end:
             try:
-                command, src_des, rec_data = extract_message(self.__udp_socket)
+                command, src_des, rec_data = extract_udp_message(self.__udp_socket)
                 self.__client_handler(command, src_des, rec_data)
             except OSError:
                 if self.__is_end:
@@ -469,7 +474,7 @@ class UdpServer(Server):
 class Message:
     command = '<command>'
 
-    def __init__(self, message_data: bytearray, src: tuple, des: tuple):
+    def __init__(self, message_data: bytearray, src: AddressIp, des: AddressIp):
         self.message_data = message_data
         self.src_server_info = src
         self.des_server_info = des
@@ -484,14 +489,8 @@ class Message:
         size of command - size of addresses - size of data -     command      -    addresses       -     data
              1B         -      1B           -      3B      - size of commandB - size of addressesB - size of dataB
         """
-        temp1 = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.src_server_info[0],
-                                                  pn=self.src_server_info[1],
-                                                  ipp=self.src_server_info[2],
-                                                  ppn=self.src_server_info[3])
-        temp2 = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.des_server_info[0],
-                                                  pn=self.des_server_info[1],
-                                                  ipp=self.des_server_info[2],
-                                                  ppn=self.des_server_info[3])
+        temp1 = self.src_server_info.get_format()
+        temp2 = self.des_server_info.get_format()
         command = bytearray(self.command, ENCODE_MODE, ERROR_ENCODING)
         servers_info = bytearray('|'.join((temp1, temp2)), ENCODE_MODE, ERROR_ENCODING)
 
@@ -507,14 +506,8 @@ class Message:
         return packet
 
     def __str__(self):
-        temp1 = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.src_server_info[0],
-                                                  pn=self.src_server_info[1],
-                                                  ipp=self.src_server_info[2],
-                                                  ppn=self.src_server_info[3])
-        temp2 = '{ip}, {pn}, {ipp}, {ppn}'.format(ip=self.des_server_info[0],
-                                                  pn=self.des_server_info[1],
-                                                  ipp=self.des_server_info[2],
-                                                  ppn=self.des_server_info[3])
+        temp1 = self.src_server_info.get_format()
+        temp2 = self.des_server_info.get_format()
         command = bytearray(self.command, ENCODE_MODE, ERROR_ENCODING)
         servers_info = bytearray('|'.join((temp1, temp2)), ENCODE_MODE, ERROR_ENCODING)
         return 'size:\n' \
@@ -530,35 +523,29 @@ class Message:
                                             sa=len(servers_info),
                                             sd=len(self.message_data),
                                             ic=self.command,
-                                            ias='{},{},{},{}'.format(self.src_server_info[0],
-                                                                     self.src_server_info[1],
-                                                                     self.src_server_info[2],
-                                                                     self.src_server_info[3]),
-                                            iad='{},{},{},{}'.format(self.des_server_info[0],
-                                                                     self.des_server_info[1],
-                                                                     self.des_server_info[2],
-                                                                     self.des_server_info[3]),
+                                            ias=self.src_server_info.get_format(),
+                                            iad=self.des_server_info.get_format(),
                                             id=self.message_data)
 
 
 class GetData(Message):
     command = 'GET'
 
-    def __init__(self, get_data: bytearray, src: tuple, des: tuple):
+    def __init__(self, get_data: bytearray, src: AddressIp, des: AddressIp):
         Message.__init__(self, get_data, src, des)
 
 
 class DownloadData(Message):
     command = 'DOWNLOAD'
 
-    def __init__(self, dwn_data: bytearray, src: tuple, des: tuple):
+    def __init__(self, dwn_data: bytearray, src: AddressIp, des: AddressIp):
         Message.__init__(self, dwn_data, src, des)
 
 
 class ResponseData(Message):
     command = 'RSP'
 
-    def __init__(self, rsp_data: bytearray, src: tuple, des: tuple):
+    def __init__(self, rsp_data: bytearray, src: AddressIp, des: AddressIp):
         Message.__init__(self, rsp_data, src, des)
 
 
@@ -566,7 +553,7 @@ class DirectoryData(Message):
     # todo complete directory data, it needs to define its format
     command = 'DIR'
 
-    def __init__(self, dir_data: bytearray, src: tuple, des: tuple):
+    def __init__(self, dir_data: bytearray, src: AddressIp, des: AddressIp):
         Message.__init__(self, dir_data, src, des)
 
 
@@ -574,7 +561,7 @@ class BridgeData(Message):
     # todo complete directory data, it needs to define its format
     command = 'BRG'
 
-    def __init__(self, brg_data: bytearray, src: tuple, des: tuple):
+    def __init__(self, brg_data: bytearray, src: AddressIp, des: AddressIp):
         Message.__init__(self, brg_data, src, des)
 
 
@@ -599,7 +586,7 @@ class BridgeConnection:
         self.running = True
 
         while self.running:
-            command, src_des, raw_data = extract_message(self.side2)
+            command, src_des, raw_data = extract_tcp_message(self.side2)
 
             if command == BridgeData.command:
                 statue = raw_data.decode(ENCODE_MODE, ERROR_ENCODING)
@@ -608,6 +595,10 @@ class BridgeConnection:
 
             mes = reassemble_mes(command, src_des, raw_data)
             self.side1.send(mes.get_data())
+
+    def stop(self):
+        self.running = False
+        self.side1.close()
 
 
 class File:
@@ -719,20 +710,19 @@ class NotMatchFormat(Exception):
 # end of classes
 def prepare_directory_message(addr_dict: dict):
     """
-    dict = { 'ip' : (portNum, 'ipProxy', proxyPortNumber) or
-     'ip' : (portNum)}
+    dict = { 'ip' : AddressIp(ip, portNum, proxy Ip, proxyPortNumber)}
 
     :param addr_dict:
     :return: str string format of directory message
     """
     res = []
     for key in addr_dict.keys():
-        value = addr_dict[key]
-        if len(value) == 3:
-            temp = '{ip}, {portNum}, {ipp}, {ppn}'.format(ip=key,
-                                                          portNum=value[0],
-                                                          ipp=value[1],
-                                                          ppn=value[2])
+        value: AddressIp = addr_dict[key]
+        if value.__class__ is AddressIp:
+            temp = '{ip}, {portNum}, {pip}, {ppn}'.format(ip=value.ip,
+                                                          portNum=value.pn,
+                                                          pip=value.proxy_ip,
+                                                          ppn=value.proxy_pn)
             res.append(temp)
         else:
             return 'error in prepare_directory_message'
@@ -767,18 +757,18 @@ def send_message_to(mes: Message, next_des: tuple):
     skt.sendto(mes.get_data(), next_des)
 
 
-def send_message_to_get_file(name: str, src_server: tuple, des_server: tuple, next_des: tuple):
+def send_message_to_get_file(name: str, src_server: AddressIp, des_server: AddressIp, next_des: tuple):
     mes = GetData(bytearray(name, ENCODE_MODE, ERROR_ENCODING), src_server, des_server)
     send_message_to(mes, next_des)
 
 
-def send_directory_message_to(dir_dict: dict, src_server: tuple, des_server: tuple, next_des: tuple):
+def send_directory_message_to(dir_dict: dict, src_server: AddressIp, des_server: AddressIp, next_des: tuple):
     mes = prepare_directory_message(dir_dict)
     mes_data = DirectoryData(bytearray(mes, ENCODE_MODE, ERROR_ENCODING), src_server, des_server)
     send_message_to(mes_data, next_des)
 
 
-def send_response_message_to(rsp: bytearray, src_server: tuple, des_server: tuple, next_des: tuple):
+def send_response_message_to(rsp: bytearray, src_server: AddressIp, des_server: AddressIp, next_des: tuple):
     resp_data = ResponseData(rsp, src_server, des_server)
     send_message_to(resp_data, next_des)
 
@@ -787,7 +777,7 @@ def recv_data(skt: socket.socket, path, name):
     running = True
     file = File(name, path)
     while running:
-        command, src_des, raw_data = extract_message(skt)
+        command, src_des, raw_data = extract_tcp_message(skt)
         if command == ResponseData.command:
             txt, file_data = extract_response_data(raw_data)
             if txt == SENDING_WAS_FINISHED:
@@ -796,19 +786,15 @@ def recv_data(skt: socket.socket, path, name):
             file.save_data(file_data)
 
 
-def download_file_from(name: str, src: tuple, des: tuple, save_in: str, save_as: str):
-
+def download_file_from(name: str, src: AddressIp, des: AddressIp, save_in: str, save_as: str):
     skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     raw_data = bytearray([len(name)]) + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
     download_mes = DownloadData(raw_data, src, des)
 
-    if does_need_a_bridge(src, des):
-        raw_data = bytearray(BRIDGE_MAKE, ENCODE_MODE, ERROR_ENCODING)
-        bridge_mes = BridgeData(raw_data, src, des)
+    send, next_hob = is_there_next_des(src, des)
 
-        skt.send(bridge_mes.get_data())
-
+    send_message_to(download_mes, next_hob)
     skt.send(download_mes.get_data())
 
     recv_data(skt, save_in, save_as)
@@ -830,8 +816,8 @@ def extract_response_data(raw_data: bytearray):
 
 def extract_get_response_data(raw_data: bytearray):
     rsp_name_size = raw_data[0]
-    rsp_name = raw_data[2:rsp_name_size+2].decode(ENCODE_MODE, ERROR_ENCODING)
-    rsp_addr = extract_address_port_format(raw_data[rsp_name_size+2:])
+    rsp_name = raw_data[2:rsp_name_size + 2].decode(ENCODE_MODE, ERROR_ENCODING)
+    rsp_addr = extract_address_ip_format(raw_data[rsp_name_size + 2:])
     return rsp_name, rsp_addr[0]
 
 
@@ -849,25 +835,30 @@ def extract_check_number(data_str: bytes):
     return chk_n, raw_data
 
 
-def is_there_next_des(base: tuple, des: tuple):
-    base_ip, base_pn, base_ipp, base_ppn = base
-    des_ip, des_pn, des_ipp, des_ppn = des
+def is_there_next_des(base: AddressIp, des: AddressIp):
+    if base.ip == des.ip:
+        return False, (des.ip, des.pn)
+    elif base.proxy_ip is None:
+        if des.proxy_ip is None:
+            return True, (des.ip, des.pn)
+        else:
+            return True, (des.proxy_ip, des.proxy_pn)
+    else:
+        if base.proxy_ip == des.proxy_ip:
+            return True, (des.ip, des.pn)
+        else:
+            return True, (base.proxy_ip, base.proxy_pn)
 
-    if base_ip == des_ip:
-        return False, (base_ip, base_pn)
-    elif des_ipp is None:
-        return True, (des_ip, des_pn)
-    elif des_ipp == base_ipp:
-        return True, (des_ip, des_pn)
-    elif not des_ipp == base_ipp:
-        return True, (des_ipp, des_ppn)
 
-
-def update_proxy_of_server(dir_dict: dict, node_ip: str):
+def update_proxy_of_server(dir_dict: dict, node_ip: AddressIp):
     host = socket.gethostbyname(socket.gethostname())
-    if dir_dict.__contains__(host) and dir_dict.__contains__(node_ip):
-        pn = dir_dict[node_ip][0]
-        dir_dict.update([(node_ip, (pn, host[0], host[1]))])
+    for addr in dir_dict.keys():
+        value: AddressIp = dir_dict[addr]
+
+        if host == value.ip:
+            node_ip.proxy_ip = value.ip
+            node_ip.proxy_pn = value.proxy_pn
+
     return dir_dict
 
 
