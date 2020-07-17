@@ -8,11 +8,15 @@ from math import ceil
 
 LIST_TEST_PATH = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Test']
 LIST_BASE_FILES_PATH = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Files_for_testing']
+
 TEST_PATH = f'{os.sep}'.join(LIST_TEST_PATH)
 BASE_FILES_PATH = f'{os.sep}'.join(LIST_BASE_FILES_PATH)
+
 IP = socket.gethostbyname(socket.gethostname())
 
 TEST_FILE_NAME = {'MUSIC': 'Awaken.mp3', 'PICTURE': 'BACKGROUND FULL HD (5).JPG'}
+TEST_SRC = nfb.AddressIp('127.0.0.5', 2000, '192.168.0.2', 5000)
+TEST_DES = nfb.AddressIp('127.0.0.8', 2000, '192.168.0.2', 5000)
 
 
 def check_two_file(path1: str, name1: str, path2: str, name2: str):
@@ -83,8 +87,6 @@ class TestAllKindMessage(ut.TestCase):
     """
     test all kind of messages
     """
-    src = nfb.AddressIp('127.0.0.5', 2000, '192.168.0.2', 5000)
-    des = nfb.AddressIp('127.0.0.5', 2000, '192.168.0.2', 5000)
 
     def test_messages(self):
         self.test_dir_message()
@@ -93,40 +95,40 @@ class TestAllKindMessage(ut.TestCase):
 
     def test_get_message(self):
         arr = bytearray(list(range(0, 200)))
-        mes = nfb.GetData(arr, self.src, self.des)
+        mes = nfb.GetData(arr, TEST_SRC, TEST_DES)
         res = mes.get_data()
-        res = res[(len(mes.command) + len(self.src.get_format()) + len(self.des.get_format()) + 5):]
+        res = res[(len(mes.command) + len(TEST_SRC.get_format()) + len(TEST_DES.get_format()) + 5):]
         self.assertListEqual([res], [res])
         self.assertEqual(mes.command, nfb.GetData.command)
 
     def test_dir_message(self):
         arr = bytearray(list(range(0, 200)))
-        mes = nfb.DirectoryData(arr, self.src, self.des)
+        mes = nfb.DirectoryData(arr, TEST_SRC, TEST_DES)
         res = mes.get_data()
-        res = res[(len(mes.command) + len(self.src.get_format()) + len(self.des.get_format()) + 5):]
+        res = res[(len(mes.command) + len(TEST_SRC.get_format()) + len(TEST_DES.get_format()) + 5):]
         self.assertListEqual([res], [res])
         self.assertEqual(mes.command, nfb.DirectoryData.command)
 
     def test_res_message(self):
         arr = bytearray(list(range(0, 200)))
-        mes = nfb.ResponseData(arr, self.src, self.des)
+        mes = nfb.ResponseData(arr, TEST_SRC, TEST_DES)
         res = mes.get_data()
-        res = res[(len(mes.command) + len(self.src.get_format()) + len(self.des.get_format()) + 5):]
+        res = res[(len(mes.command) + len(TEST_SRC.get_format()) + len(TEST_DES.get_format()) + 5):]
         self.assertListEqual([res], [res])
         self.assertEqual(mes.command, nfb.ResponseData.command)
 
 
 class TestFunctions(ut.TestCase):
-    test_address_dict = {'amir': nfb.AddressIp('amir', 232, 'io3232', 54645),
-                         'ali': nfb.AddressIp('ali', 545, None, None)}
     test_address_list = [nfb.AddressIp('amir', 232, 'io3232', 54645),
                          nfb.AddressIp('ali', 545, None, None)]
+    test_address_dict = {test_address_list[0].ip: test_address_list[0],
+                         test_address_list[1].ip: test_address_list[1]}
     test_address_str = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
     test_address_encoded = test_address_str.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
     test_src_des_str = " 'amir' , 232, 'io3232', 54645 | 'ali', 545, 'None', 'None'"
     test_src_des_encoded = test_src_des_str.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
-    test_address_src_des_dict = {nfb.SRC: nfb.AddressIp('amir', 232, 'io3232', 54645),
-                                 nfb.DES: nfb.AddressIp('ali', 545, None, None)}
+    test_address_src_des_dict = {nfb.SRC: test_address_list[0],
+                                 nfb.DES: test_address_list[1]}
 
     def test_get_size_of_file(self):
         size = ceil(7902383 / (10 ** 6))
@@ -193,6 +195,13 @@ class TestFunctions(ut.TestCase):
         except nfb.NotMatchFormat:
             pass
 
+    def test_filter_directory_dictionary(self):
+        d = nfb.filter_directory_dictionary(self.test_address_list[1],
+                                            self.test_address_list[0],
+                                            self.test_address_dict)
+        self.assertDictEqual({self.test_address_list[0].ip: self.test_address_list[0]},
+                             d)
+
     def test_prepare_directory_message(self):
         test = {'amir': nfb.AddressIp('amir', 232, 'io3232', 54645),
                 'ali': nfb.AddressIp('ali', 545, None, None)}
@@ -210,64 +219,133 @@ class TestFunctions(ut.TestCase):
         self.assertEqual(mes, test_str)
 
     def test_extract_response_data(self):
-        test_mes = b'\x06\x02<TEST>\x12\x34'
+        txt = 'h123456789'
+        test_mes = b'\x0A\x00\x00\x02h123456789\x12\x34'
         txt, raw_data = nfb.extract_response_data(bytearray(test_mes))
-        self.assertEqual(txt, '<TEST>')
+        self.assertEqual(txt, 'h123456789')
         self.assertEqual(raw_data, b'\x12\x34')
 
     def test_prepare_response_data(self):
         test_txt = '<TEST>'
-        test_data = bytearray(b'\x12\x34')
+        test_data = bytearray(b'\x12\x74')
         test_message = nfb.prepare_response_data(test_txt, test_data)
 
-        test_data = b'\x06\x02<TEST>\x12\x34'
+        test_data = b'\x06\x00\x00\x02<TEST>\x12\x74'
 
         self.assertEqual(test_message, test_data)
+
+    def test_prepare_get_response(self):
+        test_txt = '<TEST>'
+        test_message = nfb.prepare_get_response(test_txt, TEST_SRC)
+
+        test_data = bytearray([len(test_txt), len(TEST_SRC.get_format())]) + \
+                    test_txt.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING) + \
+                    TEST_SRC.get_format().encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
+        self.assertEqual(test_data, test_message)
 
 
 class TestSocketFunction(ut.TestCase):
     address = socket.gethostbyname(socket.gethostname())
-    tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    tcp_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    tcp_server_port = 4000
-    tcp_client_port = 0
     udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_server_port = 6000
     udp_client_port = 6010
 
-    test_address_list = [('amir', 232, 'io3232', 54645), ('ali', 545, None, None)]
-    test_address_src_des_dict = {nfb.SRC: ('amir', 232, 'io3232', 54645), nfb.DES: ('ali', 545, None, None)}
+    test_address_list = [nfb.AddressIp(address, udp_server_port, None, None),
+                         nfb.AddressIp('127.0.0.5', udp_client_port, None, None)]
+    test_address_src_des_dict = {nfb.SRC: test_address_list[1],
+                                 nfb.DES: test_address_list[0]}
 
     test_txt = '<TEST>'
     test_data = bytearray(b'\x12\x34')
-    test_message = None
 
-    def initialize(self):
-        self.tcp_server.bind((self.address, self.tcp_server_port))
-        # self.tcp_server.bind(('', self.tcp_client_port))
+    def initialize_udp_server(self):
         self.udp_server.bind((self.address, self.udp_server_port))
-        # self.udp_server.bind((self.address, self.udp_client_port))
+
+    def test_initialize(self):
+        self.initialize_udp_server()
+
+    def test_extract_udp_message(self):
+        self.initialize_udp_server()
 
         temp_mes = nfb.prepare_response_data(self.test_txt, self.test_data)
         self.test_message = nfb.ResponseData(temp_mes,
-                                             self.test_address_list[0],
-                                             self.test_address_list[1])
-
-    def test_initialize(self):
-        self.initialize()
-
-    def test_extract_message(self):
-        self.initialize()
-        s_data = self.test_message.get_data() + bytearray(500*100 - len(self.test_message.get_data()))
+                                             self.test_address_list[1],
+                                             self.test_address_list[0])
+        s_data = self.test_message.get_data() + bytearray(500 * 100 - len(self.test_message.get_data()))
         self.udp_client.sendto(s_data,
                                (self.address,
                                 self.udp_server_port))
 
         command, src_des, raw_data = nfb.extract_udp_message(self.udp_server)
+
         self.assertEqual(command, nfb.ResponseData.command)
         self.assertDictEqual(src_des, self.test_address_src_des_dict)
 
         txt, b_data = nfb.extract_response_data(raw_data)
         self.assertEqual(txt, self.test_txt)
         self.assertEqual(b_data, self.test_data)
+
+
+class TestDownload(ut.TestCase):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_port = 40000
+    server_ip = '127.0.0.5'
+    path = BASE_FILES_PATH
+    file = TEST_FILE_NAME['MUSIC']
+
+    def run_server(self):
+        self.server.bind((self.server_ip, self.server_port))
+        self.server.listen(3)
+        s, p = self.server.accept()
+
+        siz = nfb.get_byte_size_of_file(self.path, self.file)
+
+        for i in range(siz):
+            temp = nfb.get_ith_mb_from(self.path, self.file, i)
+
+            rsp_data = nfb.prepare_response_data(f'{self.file}_part{i}', temp)
+            rsp_mes = nfb.ResponseData(rsp_data, nfb.AddressIp(self.server_ip,
+                                                               self.server_port,
+                                                               None, None)
+                                       , nfb.AddressIp('127.0.0.9',
+                                                       12546, None, None))
+            s.send(rsp_mes.get_data())
+
+        rsp_done = nfb.prepare_response_data(f'{nfb.SENDING_WAS_FINISHED}',
+                                             bytearray(2))
+
+        s.send(nfb.ResponseData(rsp_done,
+                                nfb.AddressIp(self.server_ip,
+                                              self.server_port,
+                                              None,
+                                              None),
+                                nfb.AddressIp('127.0.0.9',
+                                              12546,
+                                              None,
+                                              None)
+                                ).get_data()
+               )
+        print('sleep')
+        sleep(2)
+        s.close()
+        self.server.close()
+        print('awake')
+
+    def test_recv_data(self):
+        t = threading.Thread(target=self.run_server)
+        t.start()
+        sleep(1)
+        skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        skt.connect((self.server_ip, self.server_port))
+
+        state, name, path = nfb.recv_data(skt,
+                                          TEST_PATH + os.sep + 'test_recv_data',
+                                          'test'
+                                          )
+
+        skt.close()
+        i = name.rfind('_', 0, len(name))
+        main_name = name[:i]
+        nfb.assemble_files(path, name, path, main_name, start_zero=True)
+        self.assertTrue(state)
