@@ -243,35 +243,76 @@ class TestFunctions(ut.TestCase):
                     TEST_SRC.get_format().encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
         self.assertEqual(test_data, test_message)
 
+    def test_extract_download_data(self):
+        name = '<DOWNLOAD>'
+        name_len = int.to_bytes(len(name),
+                                1,
+                                'big',
+                                signed=False)
+        dd = bytearray(name_len) + name.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
+
+        self.assertEqual(name, nfb.extract_download_data(dd))
+
 
 class TestSocketFunction(ut.TestCase):
     address = socket.gethostbyname(socket.gethostname())
+
+    # udp
     udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_server_port = 6000
     udp_client_port = 6010
 
-    test_address_list = [nfb.AddressIp(address, udp_server_port, None, None),
-                         nfb.AddressIp('127.0.0.5', udp_client_port, None, None)]
-    test_address_src_des_dict = {nfb.SRC: test_address_list[1],
-                                 nfb.DES: test_address_list[0]}
+    # tcp
+    tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    tcp_server_port = 4000
+    tcp_client_port = 4010
+
+    udp_address_list = [nfb.AddressIp(address, udp_server_port, None, None),
+                        nfb.AddressIp('127.0.0.5', udp_client_port, None, None)]
+    udp_address_src_des_dict = {nfb.SRC: udp_address_list[1],
+                                nfb.DES: udp_address_list[0]}
+    tcp_address_list = [nfb.AddressIp(address, tcp_server_port, None, None),
+                        nfb.AddressIp('127.0.1.5', tcp_client_port, None, None)]
+    tcp_address_src_des_dict = {nfb.SRC: tcp_address_list[0],
+                                nfb.DES: tcp_address_list[1]}
 
     test_txt = '<TEST>'
-    test_data = bytearray(b'\x12\x34')
+    test_udp_data = bytearray(b'\x12\x34')
+    test_tcp_data = bytearray(list((2 ** x) - 1 for x in range(1, 9)))
+
+    def initialize_tcp_server(self):
+        self.tcp_server.bind((self.address, self.tcp_server_port))
 
     def initialize_udp_server(self):
         self.udp_server.bind((self.address, self.udp_server_port))
 
+    def start_listening(self):
+        self.tcp_server.listen(3)
+
+        s, t = self.tcp_server.accept()
+
+        mes = nfb.Message(self.test_tcp_data,
+                          self.tcp_address_src_des_dict[nfb.SRC],
+                          self.tcp_address_src_des_dict[nfb.DES])
+        s.send(mes.get_data())
+
+        s.close()
+        self.tcp_server.close()
+
     def test_initialize(self):
         self.initialize_udp_server()
+        self.initialize_tcp_server()
 
     def test_extract_udp_message(self):
         self.initialize_udp_server()
 
-        temp_mes = nfb.prepare_response_data(self.test_txt, self.test_data)
+        temp_mes = nfb.prepare_response_data(self.test_txt, self.test_udp_data)
         self.test_message = nfb.ResponseData(temp_mes,
-                                             self.test_address_list[1],
-                                             self.test_address_list[0])
+                                             self.udp_address_list[1],
+                                             self.udp_address_list[0])
         s_data = self.test_message.get_data() + bytearray(500 * 100 - len(self.test_message.get_data()))
         self.udp_client.sendto(s_data,
                                (self.address,
@@ -280,11 +321,33 @@ class TestSocketFunction(ut.TestCase):
         command, src_des, raw_data = nfb.extract_udp_message(self.udp_server)
 
         self.assertEqual(command, nfb.ResponseData.command)
-        self.assertDictEqual(src_des, self.test_address_src_des_dict)
+        self.assertDictEqual(src_des, self.udp_address_src_des_dict)
 
         txt, b_data = nfb.extract_response_data(raw_data)
         self.assertEqual(txt, self.test_txt)
-        self.assertEqual(b_data, self.test_data)
+        self.assertEqual(b_data, self.test_udp_data)
+
+        self.udp_server.close()
+        self.udp_client.close()
+
+    def test_extract_tcp_message(self):
+        self.initialize_tcp_server()
+        t = threading.Thread(target=self.start_listening)
+        t.start()
+
+        sleep(1)
+
+        server = self.tcp_address_src_des_dict[nfb.SRC]
+
+        self.tcp_client.connect((server.ip, server.pn))
+
+        command, src_des, temp_data = nfb.extract_tcp_message(self.tcp_client)
+
+        self.assertEqual(nfb.Message.command, command)
+        self.assertDictEqual(self.tcp_address_src_des_dict, src_des)
+        self.assertEqual(self.test_tcp_data, temp_data)
+
+        self.tcp_client.close()
 
 
 class TestDownload(ut.TestCase):
@@ -293,44 +356,51 @@ class TestDownload(ut.TestCase):
     server_ip = '127.0.0.5'
     path = BASE_FILES_PATH
     file = TEST_FILE_NAME['MUSIC']
+    client = nfb.AddressIp('127.0.0.9', 12546, None, None)
 
-    def run_server(self):
+    def run_server(self, name=None):
         self.server.bind((self.server_ip, self.server_port))
         self.server.listen(3)
         s, p = self.server.accept()
 
         siz = nfb.get_byte_size_of_file(self.path, self.file)
 
-        for i in range(siz):
-            temp = nfb.get_ith_mb_from(self.path, self.file, i)
+        send = True
+        if not name is None:
+            command, src_des, temp_data = nfb.extract_tcp_message(s)
+            self.assertEqual(nfb.DownloadData.command, command)
+            name = nfb.extract_download_data(temp_data)
+            if not self.file == name:
+                send = False
 
-            rsp_data = nfb.prepare_response_data(f'{self.file}_part{i}', temp)
-            rsp_mes = nfb.ResponseData(rsp_data, nfb.AddressIp(self.server_ip,
-                                                               self.server_port,
-                                                               None, None)
-                                       , nfb.AddressIp('127.0.0.9',
-                                                       12546, None, None))
-            s.send(rsp_mes.get_data())
+        if send:
+            for i in range(siz):
+                temp = nfb.get_ith_mb_from(self.path, self.file, i)
 
-        rsp_done = nfb.prepare_response_data(f'{nfb.SENDING_WAS_FINISHED}',
-                                             bytearray(2))
+                rsp_data = nfb.prepare_response_data(f'{self.file}_part{i}', temp)
+                rsp_mes = nfb.ResponseData(rsp_data, nfb.AddressIp(self.server_ip,
+                                                                   self.server_port,
+                                                                   None, None)
+                                           , self.client)
+                s.send(rsp_mes.get_data())
 
-        s.send(nfb.ResponseData(rsp_done,
-                                nfb.AddressIp(self.server_ip,
-                                              self.server_port,
-                                              None,
-                                              None),
-                                nfb.AddressIp('127.0.0.9',
-                                              12546,
-                                              None,
-                                              None)
-                                ).get_data()
-               )
-        print('sleep')
+            rsp_done = nfb.prepare_response_data(f'{nfb.SENDING_WAS_FINISHED}',
+                                                 bytearray(2))
+
+            s.send(nfb.ResponseData(rsp_done,
+                                    nfb.AddressIp(self.server_ip,
+                                                  self.server_port,
+                                                  None,
+                                                  None),
+                                    nfb.AddressIp('127.0.0.9',
+                                                  12546,
+                                                  None,
+                                                  None)
+                                    ).get_data()
+                   )
         sleep(2)
         s.close()
         self.server.close()
-        print('awake')
 
     def test_recv_data(self):
         t = threading.Thread(target=self.run_server)
@@ -349,3 +419,22 @@ class TestDownload(ut.TestCase):
         main_name = name[:i]
         nfb.assemble_files(path, name, path, main_name, start_zero=True)
         self.assertTrue(state)
+
+    def test_download_file_from(self):
+        t = threading.Thread(target=self.run_server)
+        t.start()
+        sleep(1)
+
+        server = nfb.AddressIp(self.server_ip, self.server_port, None, None)
+        state, name, path = nfb.download_file_from(self.file,
+                                                   server,
+                                                   self.client,
+                                                   TEST_PATH + os.sep + 'test_download_file_from',
+                                                   "ddddd")
+        self.assertTrue(state)
+        self.assertEqual(self.file+'_part0', name)
+        self.assertTrue(name in os.listdir(TEST_PATH + os.sep + 'test_download_file_from'))
+
+        i = name.rfind('_', 0, len(name))
+        main_name = name[:i]
+        nfb.assemble_files(path, name, path, main_name, start_zero=True)

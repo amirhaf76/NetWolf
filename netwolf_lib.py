@@ -234,8 +234,8 @@ def get_byte_size_of_file(path: str, name: str):
 
 
 def assemble_files(path: str, name: str, new_path: str, new_name: str, start_zero=False):
+    # Todo maybe it go wrong because of running new_name file before
     new_file = open(new_path + os.sep + new_name, 'wb')
-
 
     index = 0
     temp_list = []
@@ -816,7 +816,7 @@ def send_response_message_to(rsp: bytearray, src_server: AddressIp, des_server: 
 
 def recv_data(skt: socket.socket, path: str, name: str):
     """
-    receive files after getting SENDING_WAS_FINISHED response
+    name doesn't work for while!!!!!. receive files after getting SENDING_WAS_FINISHED response
     :param skt: socket.socket
     :param path: the path which file will be stored
     :param name: the name which file will be stored
@@ -856,7 +856,8 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, save_in: str, 
     :param des: TCP server address which needed to download
     :param save_in: the path which file will be stored
     :param save_as: the name which file will be stored
-    :return: None
+    :return: state: boolean, name: received file's name,
+    path: the path which file will be stored
     """
     skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -866,8 +867,9 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, save_in: str, 
     skt.connect((src.ip, src.pn))
     skt.send(download_mes.get_data())
 
-    recv_data(skt, save_in, save_as)
-    assemble_files(save_in, save_as, )
+    temp = recv_data(skt, save_in, save_as)
+    skt.close()
+    return temp
 
 
 def extract_download_data(raw_data: bytearray):
