@@ -35,9 +35,10 @@ def check_two_file(path1: str, name1: str, path2: str, name2: str):
 
 
 class TestTcpServer(ut.TestCase):
+    path = TEST_PATH + os.sep + 'TestTcpServer'
 
     def test_start_and_stop(self):
-        tcp = nfb.TcpServer(TEST_PATH, IP, 2000)
+        tcp = nfb.TcpServer(TEST_PATH, IP)
         tcp.start()
         sleep(2)
         tcp.stop()

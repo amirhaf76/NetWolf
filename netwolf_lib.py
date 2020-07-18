@@ -257,7 +257,7 @@ def assemble_files(path: str, name: str, new_path: str, new_name: str, start_zer
             name = base_name[:dot] + f'({index})' + base_name[dot:]
         else:
             index += 1
-            name = name[:len(name)-1] + f'{index}'
+            name = name[:len(name) - 1] + f'{index}'
 
     for n in temp_list:
         os.remove(path + os.sep + n)
@@ -649,15 +649,17 @@ class File:
 class Node:
     node_list = {}
     lock = threading.Lock()
+    folders = None
 
     def __init__(self, name: str, path: str, ip: str, port: int):
         self.name = name
         self.ip = ip
         self.path = path
+        self.port = port
         self.tcp_server = TcpServer(path, ip, port=0)
         self.udp_server = UdpServer(path, self.node_list, self.lock,
                                     ip, port, self.tcp_server)
-        os.makedirs(path + os.sep + 'download', exist_ok=True)
+        self.__create_directory()
 
     def start_tcp_server(self):
         self.tcp_server.start()
@@ -666,14 +668,58 @@ class Node:
         self.udp_server.start()
 
     def download_file(self, name: str, addr: AddressIp):
+        # Todo download complete
         download_file_from(name,
                            self.tcp_server.host_info,
                            addr,
                            self.path + os.sep + 'download',
                            name)
 
-    def __create_get_message(self):
-        pass
+    def __load_directory_in_node(self):
+        dir_folder = self.folders['DIR']
+        try:
+            new_list = []
+            dir_file = open(dir_folder, 'rt')
+            lines = dir_file.readlines()
+            for l in lines:
+                l = l.split(' ')
+                if len(l) == 2:
+                    temp = AddressIp(l[1],
+                                     self.port,
+                                     None,
+                                     None)
+                    new_list.append(temp)
+                elif len(l) == 3:
+                    temp = AddressIp(l[1],
+                                     self.port,
+                                     l[1],
+                                     self.port)
+                    new_list.append(temp)
+            dir_file.close()
+
+            temp = []
+            for i in new_list:
+                temp.append((i.ip, i))
+
+            self.node_list = dict(temp)
+
+        except FileNotFoundError:
+            return 'We can\'t find dir_file.txt'
+        except ValueError:
+            return 'dir_file wasn\'t matched with format(<name> <ip> {})'.format('<proxy ip if it has proxy ip>')
+
+        return None
+
+    def __create_directory(self):
+        self.path = self.path + os.sep + 'NetWolf'
+        os.makedirs(self.path, exist_ok=True)
+
+        temp = self.path + os.sep
+
+        os.makedirs(temp + 'download', exist_ok=True)
+        os.makedirs(temp + 'dir_file', exist_ok=True)
+        self.folders = {'DOWNLOAD': temp + 'download',
+                        'DIR': temp + 'dir_file'}
 
     def __create_discovery_message(self):
         pass
@@ -814,12 +860,11 @@ def send_response_message_to(rsp: bytearray, src_server: AddressIp, des_server: 
     send_message_to(resp_data, next_des)
 
 
-def recv_data(skt: socket.socket, path: str, name: str):
+def recv_data(skt: socket.socket, path: str):
     """
     name doesn't work for while!!!!!. receive files after getting SENDING_WAS_FINISHED response
     :param skt: socket.socket
     :param path: the path which file will be stored
-    :param name: the name which file will be stored
     :return: is receiving complete?
     """
     running = True
@@ -848,14 +893,13 @@ def recv_data(skt: socket.socket, path: str, name: str):
     return state, name, stored_path
 
 
-def download_file_from(name: str, src: AddressIp, des: AddressIp, save_in: str, save_as: str):
+def download_file_from(name: str, src: AddressIp, des: AddressIp, save_in: str):
     """
     downloading files from tcp server
     :param name: name of requested file
     :param src: requester's address
     :param des: TCP server address which needed to download
     :param save_in: the path which file will be stored
-    :param save_as: the name which file will be stored
     :return: state: boolean, name: received file's name,
     path: the path which file will be stored
     """
@@ -867,7 +911,7 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, save_in: str, 
     skt.connect((src.ip, src.pn))
     skt.send(download_mes.get_data())
 
-    temp = recv_data(skt, save_in, save_as)
+    temp = recv_data(skt, save_in)
     skt.close()
     return temp
 
