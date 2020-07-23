@@ -144,9 +144,9 @@ def extract_tcp_message(skt: socket.socket):
     data_siz = int.from_bytes(skt.recv(DATA_MESSAGE_LENGTH), 'big', signed=False)
 
     command = skt.recv(command_siz).decode(ENCODE_MODE, ERROR_ENCODING)
-
     addr = extract_source_and_destination(bytearray(skt.recv(addr_siz)))
     data = skt.recv(data_siz)
+
     return command, addr, bytearray(data)
 
 
@@ -335,19 +335,18 @@ class TcpServer(Server):
 
     def __client_handler(self, skt: socket.socket):
         command, src_des, raw_data = extract_tcp_message(skt)
-        print(raw_data)
-        print('here')
-        if command == ResponseData.command:
-            name = extract_response_data(raw_data)
-            print(name)
-            if is_there_file(self.path, name):
-                self.__send(name, src_des[DES], src_des[SRC])
-            else:
-                self.__response_not_found(name, src_des[DES], src_des[SRC])
 
+        if command == ResponseData.command:
+            name, temp_data = extract_response_data(raw_data)
+
+            if is_there_file(self.path, name):
+                self.__response_found(skt, name, src_des[DES], src_des[SRC])
+                self.__send(skt, name, src_des[DES], src_des[SRC])
+            else:
+                self.__response_not_found(skt, name, src_des[DES], src_des[SRC])
         skt.close()
 
-    def __send(self, name: str, src: AddressIp, des: AddressIp):
+    def __send(self, skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
 
         size = get_byte_size_of_file(self.path, name)
 
@@ -358,20 +357,30 @@ class TcpServer(Server):
             rsp_data = prepare_response_data(f'{name}_part{part}', bytearray(data_file))
             rsp_mes = ResponseData(rsp_data, src, des)
 
-            self.__tcp_socket.send(rsp_mes.get_data())
+            skt.send(rsp_mes.get_data())
 
         # send final response
-        self.__response_done(name, src, des)
+        self.__response_done(skt, name, src, des)
 
     # Todo change txt response
-    def __response_not_found(self, name, src: AddressIp, des: AddressIp):
+    def __response_not_found(self, skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
         name = name.encode(ENCODE_MODE, ERROR_ENCODING)
         rsp_done = prepare_response_data(NOT_FOUND_RESPONSE_TEXT, bytearray(name))
-        self.__tcp_socket.send(ResponseData(rsp_done, src, des).get_data())
+        try:
+            skt.send(ResponseData(rsp_done, src, des).get_data())
+        except socket.SO_ERROR:
+            print('heeeee')
 
-    def __response_done(self, name, src: AddressIp, des: AddressIp):
-        rsp_done = prepare_response_data(f'{SENDING_WAS_FINISHED}_{name}', bytearray(0))
-        self.__tcp_socket.send(ResponseData(rsp_done, src, des).get_data())
+    def __response_found(self, skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
+        rsp_done = prepare_response_data(FOUND_RESPONSE_TEXT, bytearray(name, ENCODE_MODE, ERROR_ENCODING))
+        try:
+            skt.send(ResponseData(rsp_done, src, des).get_data())
+        except socket.SO_ERROR:
+            print('heeeee')
+
+    def __response_done(self, skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
+        rsp_done = prepare_response_data(f'{SENDING_WAS_FINISHED}', bytearray(name, ENCODE_MODE, ERROR_ENCODING))
+        skt.send(ResponseData(rsp_done, src, des).get_data())
 
 
 class UdpServer(Server):
@@ -599,58 +608,45 @@ def reassemble_mes(command, src_des, raw_data):
     return mes
 
 
-class BridgeConnection:
-
-    def __init__(self, side1: socket.socket, side2: socket.socket):
-        self.side1 = side1
-        self.side2 = side2
-        self.running = False
-
-    def start(self):
-        self.running = True
-
-        while self.running:
-            command, src_des, raw_data = extract_tcp_message(self.side2)
-
-            if command == BridgeData.command:
-                statue = raw_data.decode(ENCODE_MODE, ERROR_ENCODING)
-                if statue == BRIDGE_CLOSE:
-                    self.running = False
-
-            mes = reassemble_mes(command, src_des, raw_data)
-            self.side1.send(mes.get_data())
-
-    def stop(self):
-        self.running = False
-        self.side1.close()
-
-
 class File:
     def __init__(self, name, path):
         self.name = name
         self.path = path
 
     def save_data(self, data: bytearray):
-        file = self.__open_file()
+        try:
+            file = self.__open_file()
 
-        file.write(data)
+            file.write(data)
 
-        temp = file.name
+            temp = file.name
 
-        file.close()
+            file.close()
+        except OSError:
+            temp = "Error in saving data"
+
         return temp
 
     def save_list_of_data(self, data_list: list):
-        file = self.__open_file()
+        try:
+            file = self.__open_file()
 
-        for data in data_list:
-            file.write(data)
+            for data in data_list:
+                file.write(data)
 
-        file.close()
+            temp = file.name
+
+            file.close()
+        except OSError:
+            temp = "Error in saving data"
+
+        return temp
 
     def __open_file(self):
         name = new_name_file(self.name, self.path)
+
         __f = open(self.path + '\\' + name, 'wb')
+
         return __f
 
     def __str__(self):
@@ -876,9 +872,14 @@ def send_message_to(mes: Message, next_des: tuple):
     :param next_des: (IP, port number)
     :return: None
     """
-    skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    skt.sendto(mes.get_data(), next_des)
-    skt.close()
+    try:
+        skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        skt.sendto(mes.get_data(), next_des)
+        sent = True
+        skt.close()
+    except socket.error:
+        sent = False
+    return sent
 
 
 def send_message_to_get_file(name: str, src_server: AddressIp, des_server: AddressIp, next_des: tuple):
@@ -907,25 +908,36 @@ def send_response_message_to(rsp: bytearray, src_server: AddressIp, des_server: 
 
 def recv_data(skt: socket.socket, path: str):
     """
-    name doesn't work for while!!!!!. receive files after getting SENDING_WAS_FINISHED response
+    receive files after getting SENDING_WAS_FINISHED response
     :param skt: socket.socket
     :param path: the path which file will be stored
     :return: state: boolean, name: file's name which is received
     stored_path: path that file is stored.
     """
+
+    # To finish the loop
     running = True
+
+    # get name in first sending
     first = True
     name = None
+
+    # is_successful
+    is_successful = True
+
+    # what is stored path
     stored_path = None
-    state = True
+
     while running:
+        # extract message
         command, src_des, raw_data = extract_tcp_message(skt)
+
         if command == ResponseData.command:
             txt, file_data = extract_response_data(raw_data)
             if txt == SENDING_WAS_FINISHED:
                 break
             elif txt == NOT_FOUND_RESPONSE_TEXT:
-                state = False
+                is_successful = False
                 break
             if first:
                 name = File(txt, path).save_data(file_data)
@@ -936,16 +948,16 @@ def recv_data(skt: socket.socket, path: str):
             else:
                 File(txt, path).save_data(file_data)
 
-    return state, name, stored_path
+    return is_successful, name, stored_path
 
 
-def download_file_from(name: str, src: AddressIp, des: AddressIp, save_in: str):
+def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str):
     """
     downloading files from tcp server
     :param name: name of requested file
     :param src: requester's address
     :param des: TCP server address which needed to download
-    :param save_in: the path which file will be stored
+    :param path: the path which file will be stored
     :return: state: boolean, name: received file's name,
     path: the path which file will be stored
     """
@@ -954,10 +966,14 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, save_in: str):
     raw_data = bytearray([len(name)]) + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
     download_mes = DownloadData(raw_data, src, des)
 
-    skt.connect((src.ip, src.pn))
+    skt.connect((des.ip, des.pn))
     skt.send(download_mes.get_data())
 
-    temp = recv_data(skt, save_in)
+    cmd, src_des, temp_data = extract_tcp_message(skt)
+    is_found, temp_data = extract_response_data(temp_data)
+
+    if is_found == FOUND_RESPONSE_TEXT:
+        temp = recv_data(skt, path)
     skt.close()
     return temp
 

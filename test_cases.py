@@ -37,7 +37,7 @@ def check_two_file(path1: str, name1: str, path2: str, name2: str):
 class TestTcpServer(ut.TestCase):
     path = TEST_PATH + os.sep + 'TestTcpServer'
     client = nfb.AddressIp('127.0.0.16', 4433, None, None)
-    tcp = nfb.TcpServer(TEST_PATH, IP)
+    tcp = nfb.TcpServer(path, IP)
     file = 'File'
 
     def test_start_and_stop(self):
@@ -46,38 +46,90 @@ class TestTcpServer(ut.TestCase):
         self.tcp.stop()
         sleep(1)
 
-    def download_file(self, name):
-        # Todo the problem is DownloadData, because its text doesn't have size
-        name = name.encode(nfb.ENCODE_MODE,
-                           nfb.ERROR_ENCODING)
-        dn = nfb.prepare_response_data(bytearray(name),
-                              self.client,
-                              self.tcp.host_info)
-        print(dn.get_data())
-        skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # skt.bind((self.client.ip, self.client.pn))
+    def download_file(self, name, isfile):
 
-        # print(self.client)
-        # print(self.tcp.host_info)
+        dn = nfb.prepare_response_data(name, bytearray(0))
+        dn = nfb.ResponseData(dn, self.client, self.tcp.host_info)
+
+        skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
         skt.connect((self.tcp.host_info.ip, self.tcp.host_info.pn))
         skt.send(dn.get_data())
 
         cmd, src_des, temp_data = nfb.extract_tcp_message(skt)
-        self.assertEqual(nfb.ResponseData.command, cmd)
-        self.assertDictEqual({nfb.SRC: self.tcp.host_info,
-                              nfb.DES: self.client}, src_des)
-        txt, temp_data = nfb.extract_response_data(temp_data)
-        self.assertEqual(nfb.NOT_FOUND_RESPONSE_TEXT, txt)
-        self.assertEqual(self.file, temp_data)
+        if isfile:
+            self.assertEqual(nfb.ResponseData.command, cmd)
+            self.assertDictEqual({nfb.SRC: self.tcp.host_info,
+                                  nfb.DES: self.client}, src_des)
+            txt, temp_data = nfb.extract_response_data(temp_data)
+            self.assertEqual(nfb.FOUND_RESPONSE_TEXT, txt)
+            self.assertEqual(name, temp_data.decode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING))
+            nfb.recv_data(skt, self.tcp.path)
+
+        else:
+            self.assertEqual(nfb.ResponseData.command, cmd)
+            self.assertDictEqual({nfb.SRC: self.tcp.host_info,
+                                  nfb.DES: self.client}, src_des)
+            txt, temp_data = nfb.extract_response_data(temp_data)
+            self.assertEqual(nfb.NOT_FOUND_RESPONSE_TEXT, txt)
+            self.assertEqual(name, temp_data.decode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING))
 
         skt.close()
 
-    def test_response_not_found(self):
+    def test_response(self):
         self.tcp.start()
         sleep(1)
-        self.download_file(self.file)
-
+        self.download_file(self.file, False)
+        sleep(1)
+        name = 'BACKGROUND FULL HD (5).JPG'
+        self.download_file(name, True)
+        sleep(0.2)
         self.tcp.stop()
+
+    def test_response_not_found(self):
+        self.tcp.start()
+        name = 'BACKGROUND FULL HD (5).JPG'
+
+        sleep(0.2)
+        nfb.download_file_from(name, self.tcp.host_info, self.tcp.host_info, self.tcp.path)
+        self.tcp.stop()
+
+    def test(self):
+        addr = ('127.0.0.15', 24562)
+
+        def server(addr):
+            skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            skt.bind(addr)
+
+            skt.listen(4)
+            s, addr = skt.accept()
+            print(addr)
+            skt.close()
+            buff = s.recv(4)
+            print(buff)
+            s.send(b'\x38\x56\x09\x38')
+            s.close()
+
+        def client(addr):
+            skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            skt.connect(addr)
+
+            skt.send(bytearray([12, 54, 78, 85]))
+            print(bytearray([12, 54, 78, 85]))
+            buff = skt.recv(4)
+            print(buff)
+            print(addr)
+
+        t1 = threading.Thread(target=server, args=[addr])
+        t2 = threading.Thread(target=client, args=[addr])
+
+        t1.start()
+        t2.start()
+
+
+
+
+
 
 
 class TestUdpServer(ut.TestCase):
@@ -208,6 +260,24 @@ class TestFilesFunction(ut.TestCase):
         self.assertTrue(temp, 'Error in test_separating_and_saving_data')
         file2.close()
         file1.close()
+
+    def test_save_data(self):
+        path = TEST_PATH + os.sep + 'TestFilesFunction'
+
+        file_addr = BASE_FILES_PATH + os.sep + TEST_FILE_NAME['MUSIC']
+        file_test = open(file_addr, 'rb')
+
+        file = nfb.File('test', path)
+
+        file.save_data(bytearray(file_test.read()))
+        state = check_two_file(path, 'test', BASE_FILES_PATH, TEST_FILE_NAME['MUSIC'])
+        self.assertTrue(state)
+
+        file = nfb.File('<error>name', path+'<wrong Address>')
+        file_test.seek(0, 0)
+        print(file.save_data(bytearray(file_test.read())))
+
+        file_test.close()
 
 
 class TestAllKindMessage(ut.TestCase):
@@ -561,8 +631,8 @@ class TestDownload(ut.TestCase):
 
         server = nfb.AddressIp(self.server_ip, self.server_port, None, None)
         state, name, path = nfb.download_file_from(self.file,
-                                                   server,
                                                    self.client,
+                                                   server,
                                                    TEST_PATH + os.sep + 'test_download_file_from')
         self.assertTrue(state)
         self.assertEqual(self.file + '_part0', name)
