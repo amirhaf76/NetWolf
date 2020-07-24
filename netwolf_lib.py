@@ -19,10 +19,6 @@ NOT_FOUND_RESPONSE_TEXT = '<NOT FOUND>'
 FOUND_RESPONSE_TEXT = '<FOUND>'
 SENDING_WAS_FINISHED = '<SWF>'
 
-BRIDGE_SIZE_READ = 5
-BRIDGE_CLOSE = '<BRIDGE_CLOSE>'
-BRIDGE_MAKE = '<BRIDGE_MAKE>'
-
 UDP_TIMER = 0.006
 UDP_MESSAGE_SIZ = 500 * 100
 
@@ -48,19 +44,19 @@ class AddressIp:
                 f'{self.proxy_pn}')
 
     def __eq__(self, o) -> bool:
-        if o is None or not o.__class__ == self.__class__:
+        if not isinstance(o, AddressIp):
             return False
-        thing: AddressIp = o
-        return thing.ip == self.ip and \
-               thing.pn == self.pn and \
-               thing.proxy_ip == self.proxy_ip and \
-               thing.proxy_pn == self.proxy_pn
+        res = o.ip == self.ip
+        res = res and o.pn == self.pn
+        res = res and o.proxy_ip == self.proxy_ip
+        res = res and o.proxy_pn == self.proxy_pn
+        return res
 
 
 # functions
 def new_name_file(name: str, path: str):
     index = 0
-    # Todo os.listdir raise exception FileNotFound
+
     while name in os.listdir(path):
         index += 1
         if index == 1:
@@ -70,6 +66,7 @@ def new_name_file(name: str, path: str):
             name = name[:dot] + f'({index})' + name[dot:]
         else:
             name = name.replace(f'({index - 1})', f'({index})')
+
     return name
 
 
@@ -92,7 +89,7 @@ def get_ith_mb_from(path: str, name: str, number: int):
     file.seek((10 ** 6) * number, 0)
     temp = file.read(10 ** 6)
     file.close()
-    # print(temp)
+
     return temp
 
 
@@ -123,9 +120,7 @@ def extract_address_ip_format(raw_data: bytes):
 
             res.append(temp_address_ip)
         else:
-            print(t)
-
-            # Todo need exception
+            print('[Error] extract_address_ip_format')
     return res
 
 
@@ -172,6 +167,9 @@ def extract_udp_message(skt: socket.socket):
     start = end
     end += data_siz
     data = buff[start:end]
+    # print(command)
+    # print(addr)
+    # print(data)
     return command, addr, bytearray(data)
 
 
@@ -268,6 +266,20 @@ def assemble_files(path: str, name: str, new_path: str, new_name: str, start_zer
 
 
 # end of functions
+def response_not_found(skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
+    name = name.encode(ENCODE_MODE, ERROR_ENCODING)
+    rsp_done = prepare_response_data(NOT_FOUND_RESPONSE_TEXT, bytearray(name))
+    skt.send(ResponseData(rsp_done, src, des).get_data())
+
+
+def response_found(skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
+    rsp_done = prepare_response_data(FOUND_RESPONSE_TEXT, bytearray(name, ENCODE_MODE, ERROR_ENCODING))
+    skt.send(ResponseData(rsp_done, src, des).get_data())
+
+
+def response_done(skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
+    rsp_done = prepare_response_data(f'{SENDING_WAS_FINISHED}', bytearray(name, ENCODE_MODE, ERROR_ENCODING))
+    skt.send(ResponseData(rsp_done, src, des).get_data())
 
 
 # classes
@@ -299,6 +311,7 @@ class TcpServer(Server):
 
     def stop(self):
         self.__is_end = True
+        self.__pool.shutdown()
         self.__tcp_socket.close()
 
     def __start_server(self):
@@ -340,10 +353,10 @@ class TcpServer(Server):
             name, temp_data = extract_response_data(raw_data)
 
             if is_there_file(self.path, name):
-                self.__response_found(skt, name, src_des[DES], src_des[SRC])
+                response_found(skt, name, src_des[DES], src_des[SRC])
                 self.__send(skt, name, src_des[DES], src_des[SRC])
             else:
-                self.__response_not_found(skt, name, src_des[DES], src_des[SRC])
+                response_not_found(skt, name, src_des[DES], src_des[SRC])
         skt.close()
 
     def __send(self, skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
@@ -360,27 +373,9 @@ class TcpServer(Server):
             skt.send(rsp_mes.get_data())
 
         # send final response
-        self.__response_done(skt, name, src, des)
+        response_done(skt, name, src, des)
 
     # Todo change txt response
-    def __response_not_found(self, skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
-        name = name.encode(ENCODE_MODE, ERROR_ENCODING)
-        rsp_done = prepare_response_data(NOT_FOUND_RESPONSE_TEXT, bytearray(name))
-        try:
-            skt.send(ResponseData(rsp_done, src, des).get_data())
-        except socket.SO_ERROR:
-            print('heeeee')
-
-    def __response_found(self, skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
-        rsp_done = prepare_response_data(FOUND_RESPONSE_TEXT, bytearray(name, ENCODE_MODE, ERROR_ENCODING))
-        try:
-            skt.send(ResponseData(rsp_done, src, des).get_data())
-        except socket.SO_ERROR:
-            print('heeeee')
-
-    def __response_done(self, skt: socket.socket, name: str, src: AddressIp, des: AddressIp):
-        rsp_done = prepare_response_data(f'{SENDING_WAS_FINISHED}', bytearray(name, ENCODE_MODE, ERROR_ENCODING))
-        skt.send(ResponseData(rsp_done, src, des).get_data())
 
 
 class UdpServer(Server):
@@ -423,19 +418,19 @@ class UdpServer(Server):
                                    self.host_info.proxy_ip,
                                    self.host_info.proxy_pn)
 
-        print('[UDP Server] Server has been started')
-        print('[UDP Server] IP:{} port number:{} path:{}'.
-              format(self.host_info.proxy_ip, self.host_info.proxy_pn, self.path))
+        # print('[UDP Server] Server has been started')
+        # print('[UDP Server] IP:{} port number:{} path:{}'.
+        #       format(self.host_info.ip, self.host_info.pn, self.path))
 
         while not self.__is_end:
             try:
                 command, src_des, rec_data = extract_udp_message(self.__udp_socket)
                 self.__client_handler(command, src_des, rec_data)
-            except OSError:
+            except OSError as err:
                 if self.__is_end:
                     print('[UDP Server] Server stop manually')
                 else:
-                    print(OSError)
+                    print('[Error] start_server')
 
     def __client_handler(self, command: str, src_des: dict, rec_data: bytes):
 
@@ -489,6 +484,7 @@ class UdpServer(Server):
 
     def __handle_directory_message(self, src_des: dict, rec_data: bytes):
         new_dir_dict = make_directory_dictionary(rec_data)
+
         new_dir_dict = filter_directory_dictionary(self.host_info, src_des[SRC], new_dir_dict)
 
         self.dir_lock.acquire()
@@ -536,6 +532,7 @@ class Message:
                                          DATA_MESSAGE_ORDER))
         # command      -    addresses       -     data
         packet += command + servers_info + self.message_data
+
         return packet
 
     def __str__(self):
@@ -550,8 +547,8 @@ class Message:
                'info:\n' \
                '      command: {ic}\n' \
                '    addresses:\n' \
-               '             destination: {ias}, \n' \
-               '                   proxy: {iad}\n' \
+               '             src: {ias}, \n' \
+               '             des: {iad}\n' \
                '         data: {id}'.format(sc=len(command),
                                             sa=len(servers_info),
                                             sd=len(self.message_data),
@@ -614,31 +611,26 @@ class File:
         self.path = path
 
     def save_data(self, data: bytearray):
-        try:
-            file = self.__open_file()
+        file = self.__open_file()
 
-            file.write(data)
+        file.write(data)
 
-            temp = file.name
+        temp = file.name
 
-            file.close()
-        except OSError:
-            temp = "Error in saving data"
+        file.close()
 
         return temp
 
     def save_list_of_data(self, data_list: list):
-        try:
-            file = self.__open_file()
 
-            for data in data_list:
-                file.write(data)
+        file = self.__open_file()
 
-            temp = file.name
+        for data in data_list:
+            file.write(data)
 
-            file.close()
-        except OSError:
-            temp = "Error in saving data"
+        temp = file.name
+
+        file.close()
 
         return temp
 
@@ -681,23 +673,23 @@ class Node:
 
     def start_node(self):
         self.__load_directory_in_node()
-        self.__start_tcp_server()
-        self.__start_udp_server()
-
-    def __start_tcp_server(self):
         self.tcp_server.start()
-
-    def __start_udp_server(self):
         self.udp_server.start()
+
+    def stop(self):
+        self.timer.cancel()
+        self.tcp_server.stop()
+        self.udp_server.stop()
 
     def download_file(self, name: str, addr: AddressIp):
         state, name, path = download_file_from(name,
                                                self.tcp_server.host_info,
                                                addr,
                                                self.path + os.sep + 'download')
-        i = name.rfind('_', 0, len(name))
-        main_name = name[:i]
-        assemble_files(path, name, path, main_name, start_zero=True)
+        if state:
+            i = name.rfind('_', 0, len(name))
+            main_name = name[:i]
+            assemble_files(path, name, path, main_name, start_zero=True)
 
     def __load_directory_in_node(self):
         dir_folder = self.folders['DIR']
@@ -827,7 +819,7 @@ def prepare_directory_message(addr_dict: dict):
                                                           ppn=value.proxy_pn)
             res.append(temp)
         else:
-            return 'error in prepare_directory_message'
+            print('[Error] prepare_directory_message')
     return '|'.join(res)
 
 
@@ -842,8 +834,6 @@ def prepare_response_data(rsp_txt: str, rsp_raw_data: bytearray):
     rsp_txt_size = int.to_bytes(len(rsp_txt), 1, 'big', signed=False)
 
     rsp_raw_data_size = len(rsp_raw_data)
-    # print(log2(rsp_raw_data_size))
-    # print(ceil(log2(rsp_raw_data_size)))
     rsp_raw_data_size = int.to_bytes(rsp_raw_data_size, 3, 'big', signed=False)
 
     return bytearray(rsp_txt_size) + bytearray(rsp_raw_data_size) + rsp_txt + rsp_raw_data
@@ -872,14 +862,9 @@ def send_message_to(mes: Message, next_des: tuple):
     :param next_des: (IP, port number)
     :return: None
     """
-    try:
-        skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        skt.sendto(mes.get_data(), next_des)
-        sent = True
-        skt.close()
-    except socket.error:
-        sent = False
-    return sent
+    skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    skt.sendto(mes.get_data(), next_des)
+    skt.close()
 
 
 def send_message_to_get_file(name: str, src_server: AddressIp, des_server: AddressIp, next_des: tuple):
@@ -939,14 +924,28 @@ def recv_data(skt: socket.socket, path: str):
             elif txt == NOT_FOUND_RESPONSE_TEXT:
                 is_successful = False
                 break
-            if first:
-                name = File(txt, path).save_data(file_data)
-                point = name.rfind('\\', 0, len(name))
-                stored_path = name[:point]
-                name = name[1 + point:]
-                first = False
-            else:
-                File(txt, path).save_data(file_data)
+
+            try:
+                if first:
+                    name = File(txt, path).save_data(file_data)
+                    point = name.rfind('\\', 0, len(name))
+                    stored_path = name[:point]
+                    name = name[1 + point:]
+                    first = False
+                else:
+                    File(txt, path).save_data(file_data)
+            except IOError:
+                print('[Error] recv_data: IOError')
+                is_successful = False
+                name = None
+                stored_path = None
+                running = False
+            except Exception:
+                print('[Error] recv_data: Error')
+                is_successful = False
+                name = None
+                stored_path = None
+                running = False
 
     return is_successful, name, stored_path
 
@@ -961,21 +960,29 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str):
     :return: state: boolean, name: received file's name,
     path: the path which file will be stored
     """
-    skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    res = None
+    try:
+        skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        skt.connect((des.ip, des.pn))
 
-    raw_data = bytearray([len(name)]) + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
-    download_mes = DownloadData(raw_data, src, des)
+        raw_data = bytearray([len(name)]) + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
+        download_mes = DownloadData(raw_data, src, des)
 
-    skt.connect((des.ip, des.pn))
-    skt.send(download_mes.get_data())
+        skt.send(download_mes.get_data())
 
-    cmd, src_des, temp_data = extract_tcp_message(skt)
-    is_found, temp_data = extract_response_data(temp_data)
+        cmd, src_des, temp_data = extract_tcp_message(skt)
 
-    if is_found == FOUND_RESPONSE_TEXT:
-        temp = recv_data(skt, path)
-    skt.close()
-    return temp
+        if not len(temp_data) == 0 and cmd == ResponseData.command:
+            is_found, temp_data = extract_response_data(temp_data)
+
+            if is_found == FOUND_RESPONSE_TEXT:
+                res = recv_data(skt, path)
+
+        skt.close()
+    except socket.error:
+        print('[Error] download_file_from: error in socket')
+
+    return res
 
 
 def extract_download_data(raw_data: bytearray):
@@ -986,7 +993,6 @@ def extract_download_data(raw_data: bytearray):
 
 def extract_response_data(raw_data: bytearray):
     rsp_txt_size = raw_data[0]
-    # rsp_data_size = raw_data[1]
     rsp_txt = raw_data[4:(rsp_txt_size + 4)].decode(ENCODE_MODE, ERROR_ENCODING)
     rsp_data = raw_data[rsp_txt_size + 4:]
     return rsp_txt, rsp_data

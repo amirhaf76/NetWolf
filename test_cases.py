@@ -127,20 +127,18 @@ class TestTcpServer(ut.TestCase):
         t2.start()
 
 
-
-
-
-
-
 class TestUdpServer(ut.TestCase):
-    tcp = nfb.TcpServer(TEST_PATH + os.sep + 'TestUcpServer', '127.0.0.44')
-    client = nfb.AddressIp('127.0.1.16', 4433, None, None)
+    server_ip = '127.0.1.16'
+    server_port = 48856
+
+    tcp = nfb.TcpServer(TEST_PATH + os.sep + 'TestTcpServer', server_ip)
+    client = nfb.AddressIp('127.0.1.14', 44533, None, None)
     dict_list = {}
-    udp = nfb.UdpServer(TEST_PATH + os.sep + 'TestUcpServer',
+    udp = nfb.UdpServer(TEST_PATH + os.sep + 'TestUdpServer',
                         dict_list,
                         threading.Lock(),
-                        '127.0.0.44',
-                        4433,
+                        server_ip,
+                        server_port,
                         tcp)
 
     def test_start_and_stop(self):
@@ -153,17 +151,20 @@ class TestUdpServer(ut.TestCase):
         pass
 
     def client_server(self):
+        skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        skt.bind((self.client.ip, self.client.pn))
+
         nfb.send_message_to_get_file('hello.txt',
                                      self.client,
                                      self.udp.host_info,
                                      (self.udp.host_info.ip, self.udp.host_info.pn))
-
-        skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        skt.bind((self.client.ip, self.client.pn))
-
+        print('here 1')
         cmd, src_des, temp_data = nfb.extract_udp_message(skt)
+        print('here 2')
         self.assertEqual(nfb.ResponseData.command, cmd)
+        print('here 3')
         txt, temp_data = nfb.extract_response_data(temp_data)
+
         name, temp_data = nfb.extract_get_response_data(temp_data)
 
         self.assertEqual(nfb.NOT_FOUND_RESPONSE_TEXT, txt)
@@ -187,17 +188,16 @@ class TestUdpServer(ut.TestCase):
         skt.close()
 
     def client_discovery(self):
-        src = nfb.AddressIp('127.0.1.16', 4433, None, None)
+        src = self.client
         addr = [nfb.AddressIp(IP, 4000, None, None),
                 nfb.AddressIp('127.0.1.24', 2545, None, None),
                 self.udp.host_info]
 
-        dict_temp = {'127.0.1.125': addr[0],
-                     '127.0.1.24': addr[1],
-                     self.udp.host_info.ip: addr[2]}
+        dict_temp = {addr[0].ip: addr[0],
+                     addr[1].ip: addr[1],
+                     addr[2].ip: addr[2]}
 
         send, hub = nfb.is_there_next_des(src, self.udp.host_info)
-
         nfb.send_directory_message_to(dict_temp,
                                       src,
                                       self.udp.host_info,
@@ -206,17 +206,19 @@ class TestUdpServer(ut.TestCase):
     def test_discovery(self):
         self.udp.start()
 
+        sleep(.2)
+
         self.client_discovery()
 
-        src = nfb.AddressIp('127.0.1.16', 4433, None, None)
         addr = [nfb.AddressIp(IP, 4000, None, None),
                 nfb.AddressIp('127.0.1.24', 2545, None, None),
-                self.udp.host_info]
+                self.client]
 
-        dict_temp = {IP: addr[0],
-                     '127.0.1.24': addr[1],
-                     '127.0.1.16': src}
-        sleep(1)
+        dict_temp = {addr[0].ip: addr[0],
+                     addr[1].ip: addr[1],
+                     addr[2].ip: addr[2]}
+        sleep(.2)
+
         self.assertDictEqual(dict_temp, self.udp.dis_dict)
         temp_udp_address = nfb.AddressIp(self.udp.host_info.ip,
                                          self.udp.host_info.pn,
@@ -228,12 +230,18 @@ class TestUdpServer(ut.TestCase):
     def test_get_message_handler(self):
         self.udp.start()
 
+        print('test start')
         self.client_server()
+        print('test done')
 
         self.udp.stop()
 
 
 class TestFilesFunction(ut.TestCase):
+
+    def test_all(self):
+        self.test_separating_and_saving_data()
+        self.test_save_data()
 
     def test_separating_and_saving_data(self):
         """
@@ -273,10 +281,6 @@ class TestFilesFunction(ut.TestCase):
         state = check_two_file(path, 'test', BASE_FILES_PATH, TEST_FILE_NAME['MUSIC'])
         self.assertTrue(state)
 
-        file = nfb.File('<error>name', path+'<wrong Address>')
-        file_test.seek(0, 0)
-        print(file.save_data(bytearray(file_test.read())))
-
         file_test.close()
 
 
@@ -285,7 +289,7 @@ class TestAllKindMessage(ut.TestCase):
     test all kind of messages
     """
 
-    def test_messages(self):
+    def test_all(self):
         self.test_dir_message()
         self.test_get_message()
         self.test_res_message()
@@ -326,6 +330,26 @@ class TestFunctions(ut.TestCase):
     test_src_des_encoded = test_src_des_str.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
     test_address_src_des_dict = {nfb.SRC: test_address_list[0],
                                  nfb.DES: test_address_list[1]}
+
+    def test_AddressIp(self):
+        ip = nfb.AddressIp(IP, 12323, None, None)
+        print(ip)
+        print(ip.get_format())
+
+    def test_all(self):
+        self.test_get_size_of_file()
+        self.test_get_ith_mb_from()
+        self.test_assemble_files()
+        self.test_extract_address_ip_format()
+        self.test_extract_source_and_destination()
+        self.test_make_directory_dictionary()
+        self.test_filter_directory_dictionary()
+        self.test_prepare_directory_message()
+        self.test_extract_response_data()
+        self.test_prepare_response_data()
+        self.test_prepare_get_response()
+        self.test_extract_download_data()
+        self.test_update_proxy_of_server()
 
     def test_get_size_of_file(self):
         size = ceil(7902383 / (10 ** 6))
@@ -386,6 +410,7 @@ class TestFunctions(ut.TestCase):
         test_list = " 'amir' , 232, 'io3232', 546,45 | 'ali', 545, 'None', 'None'"
         temp = (test_list.encode('utf-8', 'ignore'))
 
+        # rise error
         try:
             temp_res = nfb.make_directory_dictionary(temp)
             self.assertNotEqual(temp_res, self.test_address_dict)
@@ -489,6 +514,10 @@ class TestSocketFunction(ut.TestCase):
     test_udp_data = bytearray(b'\x12\x34')
     test_tcp_data = bytearray(list((2 ** x) - 1 for x in range(1, 9)))
 
+    def test_all(self):
+        self.test_extract_udp_message()
+        self.test_extract_tcp_message()
+
     def initialize_tcp_server(self):
         self.tcp_server.bind((self.address, self.tcp_server_port))
 
@@ -580,6 +609,19 @@ class TestDownload(ut.TestCase):
                 send = False
 
         if send:
+            rsp_found = nfb.prepare_response_data(nfb.FOUND_RESPONSE_TEXT,
+                                                  bytearray(2))
+            s.send(nfb.ResponseData(rsp_found,
+                                    nfb.AddressIp(self.server_ip,
+                                                  self.server_port,
+                                                  None,
+                                                  None),
+                                    nfb.AddressIp('127.14.0.9',
+                                                  12546,
+                                                  None,
+                                                  None)
+                                    ).get_data()
+                   )
             for i in range(siz):
                 temp = nfb.get_ith_mb_from(self.path, self.file, i)
 
@@ -615,14 +657,17 @@ class TestDownload(ut.TestCase):
         skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         skt.connect((self.server_ip, self.server_port))
 
+        rsp, src_des, temp_data = nfb.extract_tcp_message(skt)
+
         state, name, path = nfb.recv_data(skt,
                                           TEST_PATH + os.sep + 'test_recv_data')
 
         skt.close()
-        i = name.rfind('_', 0, len(name))
-        main_name = name[:i]
-        nfb.assemble_files(path, name, path, main_name, start_zero=True)
-        self.assertTrue(state)
+        if state:
+            i = name.rfind('_', 0, len(name))
+            main_name = name[:i]
+            nfb.assemble_files(path, name, path, main_name, start_zero=True)
+            self.assertTrue(state)
 
     def test_download_file_from(self):
         t = threading.Thread(target=self.run_server)
@@ -638,6 +683,7 @@ class TestDownload(ut.TestCase):
         self.assertEqual(self.file + '_part0', name)
         self.assertTrue(name in os.listdir(TEST_PATH + os.sep + 'test_download_file_from'))
 
-        i = name.rfind('_', 0, len(name))
-        main_name = name[:i]
-        nfb.assemble_files(path, name, path, main_name, start_zero=True)
+        if state:
+            i = name.rfind('_', 0, len(name))
+            main_name = name[:i]
+            nfb.assemble_files(path, name, path, main_name, start_zero=True)
