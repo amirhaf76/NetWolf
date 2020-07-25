@@ -34,6 +34,57 @@ def check_two_file(path1: str, name1: str, path2: str, name2: str):
     return True
 
 
+class TestNode(ut.TestCase):
+    path = TEST_PATH + os.sep + 'TestNode'
+
+    node1 = nfb.Node('node1', path, IP, 12345)
+    node2 = nfb.Node('node2', path, '127.0.1.15', 54321)
+
+    def test_initialize(self):
+        nodes = os.listdir(self.node1.path)
+        self.assertEqual(2, len(nodes))
+        self.assertEqual(['Node_node1', 'Node_node2'], nodes)
+
+    def test_start_stop(self):
+        self.node1.start_node()
+        sleep(1)
+        self.node1.stop_node()
+
+    def test_load_directory_in_node(self):
+        self.node1.load_directory_in_node()
+        temp = self.node1.node_list
+        for i in temp.keys():
+            print(f'{i}  {temp[i]}')
+        self.node1.stop_node()
+
+    def test_distribute(self):
+        self.node1.start_node()
+        self.node2.start_node()
+        # print(self.node1.udp_server.host_info)
+        # print(self.node2.udp_server.host_info)
+        sleep(0.2)
+        self.node1.distribute_discovery_message()
+        sleep(1)
+        self.node2.distribute_discovery_message()
+        self.node1.stop_node()
+        self.node2.stop_node()
+        sleep(1)
+        print(self.node1.show_state())
+        print(self.node2.show_state())
+
+
+class TestTimerLoop(ut.TestCase):
+    path = TEST_PATH + os.sep + 'TestNode'
+
+    node1 = nfb.Node('node1', path, IP, 12345)
+
+    def test(self):
+        n = nfb.NodeTimer(0.5, self.node1)
+        n.start()
+        sleep(0.5)
+        n.stop()
+
+
 class TestTcpServer(ut.TestCase):
     path = TEST_PATH + os.sep + 'TestTcpServer'
     client = nfb.AddressIp('127.0.0.16', 4433, None, None)
@@ -418,9 +469,11 @@ class TestFunctions(ut.TestCase):
             pass
 
     def test_filter_directory_dictionary(self):
+
+        d = {self.test_address_list[1].ip: self.test_address_list[1]}
         d = nfb.filter_directory_dictionary(self.test_address_list[1],
                                             self.test_address_list[0],
-                                            self.test_address_dict)
+                                            d)
         self.assertDictEqual({self.test_address_list[0].ip: self.test_address_list[0]},
                              d)
 

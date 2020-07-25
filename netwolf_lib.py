@@ -3,6 +3,7 @@ import socket
 import os
 from concurrent.futures import ThreadPoolExecutor
 from math import ceil
+from time import sleep
 
 ENCODE_MODE = 'utf-8'
 ERROR_ENCODING = 'backslashreplace'
@@ -25,7 +26,7 @@ UDP_MESSAGE_SIZ = 500 * 100
 
 class AddressIp:
 
-    def __init__(self, ip, pn, proxy_ip, proxy_pn):
+    def __init__(self, ip: str, pn: int, proxy_ip: str = None, proxy_pn: int = None):
         self.ip = ip
         self.pn = pn
         self.proxy_ip = proxy_ip
@@ -188,10 +189,16 @@ def make_directory_dictionary(dir_dict: bytes):
     return dict(dir_list)
 
 
-def filter_directory_dictionary(base_address_ip: AddressIp, src: AddressIp, dir_dict: dict):
+def filter_directory_dictionary(base_address_ip: AddressIp, sender: AddressIp, dir_dict: dict):
     if dir_dict.__contains__(base_address_ip.ip):
+        # print(dir_dict.__contains__(base_address_ip.ip))
+        # print(base_address_ip.ip)
+        # print(len(dir_dict))
         dir_dict.pop(base_address_ip.ip)
-    dir_dict.update({src.ip: src})
+        # print(len(dir_dict))
+
+    dir_dict.update({sender.ip: sender})
+
     return dir_dict
 
 
@@ -418,9 +425,9 @@ class UdpServer(Server):
                                    self.host_info.proxy_ip,
                                    self.host_info.proxy_pn)
 
-        # print('[UDP Server] Server has been started')
-        # print('[UDP Server] IP:{} port number:{} path:{}'.
-        #       format(self.host_info.ip, self.host_info.pn, self.path))
+        print('[UDP Server] Server has been started')
+        print('[UDP Server] IP:{} port number:{} path:{}'.
+              format(self.host_info.ip, self.host_info.pn, self.path))
 
         while not self.__is_end:
             try:
@@ -433,7 +440,7 @@ class UdpServer(Server):
                     print('[Error] start_server')
 
     def __client_handler(self, command: str, src_des: dict, rec_data: bytes):
-
+        # print(f'get {self.host_info}')
         check_mes, next_des = is_there_next_des(self.host_info, src_des[DES])
 
         if check_mes:
@@ -484,13 +491,13 @@ class UdpServer(Server):
 
     def __handle_directory_message(self, src_des: dict, rec_data: bytes):
         new_dir_dict = make_directory_dictionary(rec_data)
-
         new_dir_dict = filter_directory_dictionary(self.host_info, src_des[SRC], new_dir_dict)
 
         self.dir_lock.acquire()
+
         self.dis_dict.update(new_dir_dict)
 
-        self.dis_dict.update(update_proxy_of_server(self.dis_dict, self.host_info))
+        update_proxy_of_server(self.dis_dict, self.host_info)
 
         self.dir_lock.release()
 
@@ -622,7 +629,6 @@ class File:
         return temp
 
     def save_list_of_data(self, data_list: list):
-
         file = self.__open_file()
 
         for data in data_list:
@@ -647,15 +653,15 @@ class File:
 
 
 class Node:
-    node_list = {}
-    lock = threading.Lock()
-    folders = None
 
     def __init__(self, name: str, path: str, ip: str, port: int):
         self.name = name
         self.ip = ip
         self.path = path
         self.port = port
+        self.lock = threading.Lock()
+        self.folders = None
+        self.node_list = {}
         self.tcp_server = TcpServer(path, ip, port=0)
         self.udp_server = UdpServer(path, self.node_list, self.lock,
                                     ip, port, self.tcp_server)
@@ -663,23 +669,18 @@ class Node:
         # make folder
         self.__create_directory()
 
-        # prepare timer
-        self.timer = threading.Timer(UDP_TIMER,
-                                     self.__distribute_discovery_message,
-                                     [self])
-
-        # start timer, it's working in loop
-        self.timer.start()
-
     def start_node(self):
-        self.__load_directory_in_node()
-        self.tcp_server.start()
-        self.udp_server.start()
+        self.load_directory_in_node()
+        if not self.tcp_server.isAlive():
+            self.tcp_server.start()
+        if not self.udp_server.isAlive():
+            self.udp_server.start()
 
-    def stop(self):
-        self.timer.cancel()
-        self.tcp_server.stop()
-        self.udp_server.stop()
+    def stop_node(self):
+        if self.tcp_server.isAlive():
+            self.tcp_server.stop()
+        if self.udp_server.isAlive():
+            self.udp_server.stop()
 
     def download_file(self, name: str, addr: AddressIp):
         state, name, path = download_file_from(name,
@@ -691,14 +692,21 @@ class Node:
             main_name = name[:i]
             assemble_files(path, name, path, main_name, start_zero=True)
 
-    def __load_directory_in_node(self):
-        dir_folder = self.folders['DIR']
+    def load_directory_in_node(self):
+        """
+        dir_file.txt: 'name ip port' or 'name ip'
+        :return:
+        """
+        file = self.folders['DIR'] + os.sep + 'dir_file.txt'
+        self.lock.acquire()
         try:
             new_list = []
-            dir_file = open(dir_folder, 'rt')
+            dir_file = open(file, 'rt')
+            print(file)
             lines = dir_file.readlines()
             for l in lines:
                 l = l.split(' ')
+                # name ip pn proxy_ip proxy_pn
                 if len(l) == 2:
                     temp = AddressIp(l[1],
                                      self.port,
@@ -707,9 +715,21 @@ class Node:
                     new_list.append(temp)
                 elif len(l) == 3:
                     temp = AddressIp(l[1],
-                                     self.port,
-                                     l[1],
-                                     self.port)
+                                     int(l[2]),
+                                     None,
+                                     None)
+                    new_list.append(temp)
+                elif len(l) == 4:
+                    temp = AddressIp(l[1],
+                                     int(l[2]),
+                                     l[3],
+                                     None)
+                    new_list.append(temp)
+                elif len(l) == 4:
+                    temp = AddressIp(l[1],
+                                     int(l[2]),
+                                     l[3],
+                                     int(l[4]))
                     new_list.append(temp)
             dir_file.close()
 
@@ -717,27 +737,19 @@ class Node:
             for i in new_list:
                 temp.append((i.ip, i))
 
-            self.node_list = dict(temp)
+            self.node_list.update(dict(temp))
 
         except FileNotFoundError:
-            return 'We can\'t find dir_file.txt'
+            print('there is not find dir_file.txt')
         except ValueError:
-            return 'dir_file wasn\'t matched with format(<name> <ip> {})'.format('<proxy ip if it has proxy ip>')
+            print('dir_file wasn\'t matched with format(<name> <ip> {})'
+                  .format('<proxy ip if it has proxy ip>'))
+        except Exception as err:
+            print(err)
+        self.lock.release()
 
-        return None
-
-    def __create_directory(self):
-        self.path = self.path + os.sep + 'NetWolf'
-        os.makedirs(self.path, exist_ok=True)
-
-        temp = self.path + os.sep
-
-        os.makedirs(temp + 'download', exist_ok=True)
-        os.makedirs(temp + 'dir_file', exist_ok=True)
-        self.folders = {'DOWNLOAD': temp + 'download',
-                        'DIR': temp + 'dir_file'}
-
-    def __distribute_discovery_message(self):
+    def distribute_discovery_message(self):
+        self.lock.acquire()
         for addr in self.node_list.keys():
 
             des_server = self.node_list[addr]
@@ -745,20 +757,36 @@ class Node:
             send, hub = is_there_next_des(self.udp_server.host_info, des_server)
 
             if send:
+                # print(f'from {self.udp_server.host_info} send to {hub}')
                 send_directory_message_to(self.node_list,
                                           self.udp_server.host_info,
                                           des_server,
                                           hub)
-        self.timer.start()
+        self.lock.release()
 
-    def __create_response_message(self):
-        pass
+    def show_state(self):
+        text = f'[Node_{self.name}]:\n' \
+               f'   [UDP Server]: {self.udp_server.host_info}\n' \
+               f'   [TCP Server]: {self.tcp_server.host_info}\n'
+        node_list_txt = '   [nodelist]:'
+        text += node_list_txt
+        for i in self.node_list.values():
+            text += '\n'
+            text += ' ' * len(node_list_txt)
+            text += f'{i}'
+        return text
 
-    def __start_timer(self, discovery):
-        pass
+    def __create_directory(self):
+        temp = self.path + os.sep + f'Node_{self.name}'
+        os.makedirs(temp, exist_ok=True)
 
-    def __update_list(self, node_list):
-        pass
+        temp = temp + os.sep
+
+        os.makedirs(temp + 'download', exist_ok=True)
+        os.makedirs(temp + 'dir_file', exist_ok=True)
+        self.folders = {'DOWNLOAD': temp + 'download',
+                        'DIR': temp + 'dir_file'}
+        # print(self.folders)
 
     def __serialize_data(self, s_date):
         pass
@@ -766,14 +794,32 @@ class Node:
     def __deserialize_data(self, s_data):
         pass
 
-    def __handle_response(self):
-        pass
-
-    def __save_file(self):
-        pass
-
     def __chose_best(self):
         pass
+
+
+class NodeTimer(threading.Thread):
+    __first = True
+
+    def __init__(self, time: float, node: Node):
+        threading.Thread.__init__(self)
+        self.time = time
+        self.node = node
+        self.__running = True
+
+    def run(self) -> None:
+        while self.__running:
+            timer = threading.Timer(self.time,
+                                    self.node.distribute_discovery_message,
+                                    [])
+            timer.start()
+            sleep(self.time + 0.05)
+        else:
+            print('end')
+
+    def stop(self):
+        self.__running = False
+        sleep(self.time + 0.05)
 
 
 class NetWolf:
@@ -1039,11 +1085,12 @@ def is_there_next_des(base: AddressIp, des: AddressIp):
 
 def update_proxy_of_server(dir_dict: dict, node_ip: AddressIp):
     host = socket.gethostbyname(socket.gethostname())
-    for addr in dir_dict.keys():
-        value: AddressIp = dir_dict[addr]
+    if not node_ip.ip == host:
+        for addr in dir_dict.keys():
+            value: AddressIp = dir_dict[addr]
 
-        if host == value.ip:
-            node_ip.proxy_ip = value.ip
-            node_ip.proxy_pn = value.pn
+            if host == value.ip:
+                node_ip.proxy_ip = value.ip
+                node_ip.proxy_pn = value.pn
 
-    return dir_dict
+    # return dir_dict
