@@ -4,6 +4,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 from time import sleep
+from IPython.display import clear_output
 
 ENCODE_MODE = 'utf-8'
 ERROR_ENCODING = 'backslashreplace'
@@ -33,10 +34,10 @@ class AddressIp:
         self.proxy_pn = proxy_pn
 
     def __str__(self):
-        return (f'ip:{self.ip},' +
-                f'pn:{self.pn},' +
-                f'proxy_ip:{self.proxy_ip},' +
-                f'proxy_pn:{self.proxy_pn}')
+        return (f'ip: {self.ip}, ' +
+                f'pn: {self.pn}, ' +
+                f'proxy_ip: {self.proxy_ip}, ' +
+                f'proxy_pn: {self.proxy_pn}')
 
     def get_format(self):
         return (f'{self.ip}, ' +
@@ -45,6 +46,9 @@ class AddressIp:
                 f'{self.proxy_pn}')
 
     def __eq__(self, o) -> bool:
+        if o is self:
+            print(o is self)
+            return True
         if not isinstance(o, AddressIp):
             return False
         res = o.ip == self.ip
@@ -303,15 +307,19 @@ class Server(threading.Thread):
 
 
 class TcpServer(Server):
-    __pool = ThreadPoolExecutor(max_workers=5)
-    __tcp_socket = None
 
     # its better to give it address of localhost
     def __init__(self, path: str, addr, port=0):
         Server.__init__(self)
+
+        self.__pool = ThreadPoolExecutor(max_workers=5)
+        self.__tcp_socket = None
+
         self.path = path
         self.host_info = AddressIp(addr, port, None, None)
         self.__is_end = False
+
+        self.log = []
 
     def run(self):
         self.__start_server()
@@ -340,6 +348,9 @@ class TcpServer(Server):
         # start to listening
         self.__tcp_socket.listen(2)
 
+        self.log.append('[TCP Server] Server has been started')
+        self.log.append('[TCP Server] IP:{} port number:{} path:{}'.
+                        format(self.host_info.ip, self.host_info.pn, self.path))
         print('[TCP Server] Server has been started')
         print('[TCP Server] IP:{} port number:{} path:{}'.
               format(self.host_info.ip, self.host_info.pn, self.path))
@@ -347,17 +358,19 @@ class TcpServer(Server):
             try:
                 temp_socket = self.__tcp_socket.accept()
                 self.__pool.submit(self.__client_handler, temp_socket[0])
-            except OSError:
+            except OSError as err:
                 if self.__is_end:
                     print('[TCP Server] Server stop manually')
+                    # self.log.append('[TCP Server] Server stop manually')
                 else:
-                    print(OSError)
+                    print(err)
+                    # self.log.append(err)
 
     def __client_handler(self, skt: socket.socket):
         command, src_des, raw_data = extract_tcp_message(skt)
 
-        if command == ResponseData.command:
-            name, temp_data = extract_response_data(raw_data)
+        if command == DownloadData.command:
+            name = extract_download_data(raw_data)
 
             if is_there_file(self.path, name):
                 response_found(skt, name, src_des[DES], src_des[SRC])
@@ -382,13 +395,10 @@ class TcpServer(Server):
         # send final response
         response_done(skt, name, src, des)
 
-    # Todo change txt response
-
 
 class UdpServer(Server):
     # 1 Mib
     __size_of_message = 500 * 100
-    __udp_socket = None
 
     def __init__(self, path: str,
                  dir_dict: dict,
@@ -396,6 +406,8 @@ class UdpServer(Server):
                  ip, port, tcp_server: TcpServer = None):
 
         Server.__init__(self)
+
+        self.__udp_socket = None
         self.path = path
         self.dis_dict = dir_dict
         self.dir_lock = dir_lock
@@ -437,7 +449,8 @@ class UdpServer(Server):
                 if self.__is_end:
                     print('[UDP Server] Server stop manually')
                 else:
-                    print('[Error] start_server')
+                    print(err)
+                    # self.log.append(err)
 
     def __client_handler(self, command: str, src_des: dict, rec_data: bytes):
         # print(f'get {self.host_info}')
@@ -659,15 +672,17 @@ class Node:
         self.ip = ip
         self.path = path
         self.port = port
+
         self.lock = threading.Lock()
         self.folders = None
         self.node_list = {}
-        self.tcp_server = TcpServer(path, ip, port=0)
-        self.udp_server = UdpServer(path, self.node_list, self.lock,
-                                    ip, port, self.tcp_server)
 
         # make folder
         self.__create_directory()
+
+        self.tcp_server = TcpServer(self.folders['DOWNLOAD'], ip, port=0)
+        self.udp_server = UdpServer(self.folders['DOWNLOAD'], self.node_list, self.lock,
+                                    ip, port, self.tcp_server)
 
     def start_node(self):
         self.load_directory_in_node()
@@ -683,10 +698,14 @@ class Node:
             self.udp_server.stop()
 
     def download_file(self, name: str, addr: AddressIp):
-        state, name, path = download_file_from(name,
-                                               self.tcp_server.host_info,
-                                               addr,
-                                               self.path + os.sep + 'download')
+
+        temp = download_file_from(name,
+                                  self.tcp_server.host_info,
+                                  addr,
+                                  self.folders['DOWNLOAD'])
+        print(temp)
+
+        state, name, path = temp
         if state:
             i = name.rfind('_', 0, len(name))
             main_name = name[:i]
@@ -702,10 +721,14 @@ class Node:
         try:
             new_list = []
             dir_file = open(file, 'rt')
-            print(file)
+
             lines = dir_file.readlines()
-            for l in lines:
-                l = l.split(' ')
+            for line in lines:
+                line = line.split(' ')
+                l = []
+                for e in line:
+                    l.append(e.strip(os.linesep))
+
                 # name ip pn proxy_ip proxy_pn
                 if len(l) == 2:
                     temp = AddressIp(l[1],
@@ -742,6 +765,7 @@ class Node:
         except FileNotFoundError:
             print('there is not find dir_file.txt')
         except ValueError:
+            dir_file.close()
             print('dir_file wasn\'t matched with format(<name> <ip> {})'
                   .format('<proxy ip if it has proxy ip>'))
         except Exception as err:
@@ -758,16 +782,20 @@ class Node:
 
             if send:
                 # print(f'from {self.udp_server.host_info} send to {hub}')
-                send_directory_message_to(self.node_list,
-                                          self.udp_server.host_info,
-                                          des_server,
-                                          hub)
+                try:
+                    send_directory_message_to(self.node_list,
+                                              self.udp_server.host_info,
+                                              des_server,
+                                              hub)
+                except socket.error:
+                    print('[Error] distribute_discovery_message')
+
         self.lock.release()
 
     def show_state(self):
         text = f'[Node_{self.name}]:\n' \
-               f'   [UDP Server]: {self.udp_server.host_info}\n' \
-               f'   [TCP Server]: {self.tcp_server.host_info}\n'
+            f'   [UDP Server]: {self.udp_server.host_info}\n' \
+            f'   [TCP Server]: {self.tcp_server.host_info}\n'
         node_list_txt = '   [nodelist]:'
         text += node_list_txt
         for i in self.node_list.values():
@@ -787,6 +815,20 @@ class Node:
         self.folders = {'DOWNLOAD': temp + 'download',
                         'DIR': temp + 'dir_file'}
         # print(self.folders)
+
+    # def save_directory(self):
+    #     file_name = 'dir_file'
+    #     file_addr = self.folders['DIR'] + os.sep + file_name
+    #
+    #     self.lock.acquire()
+    #     file_new_data = self.node_list.copy()
+    #     self.lock.release()
+    #
+    #     try:
+    #         file = open(file_name)
+    #         pass
+
+
 
     def __serialize_data(self, s_date):
         pass
@@ -831,11 +873,43 @@ class NetWolf:
 
     def __init__(self):
         print('NetWolf 1398-1399')
-        self.port = int(input('Please enter port number: '))
-        self.dir = input('Please enter directory of list: ')
+        err = ''
+        while True:
+            try:
+                self.port = int(input(f'{err}Please enter port number: '))
+                break
+            except ValueError as value:
+                # print(value)
+                err = '[Your path is not correct] '
+                clear_output()
+                continue
+        err = ''
+        while True:
+            try:
+                self.dir = input(f'{err}Please enter directory of list: ')
+                if os.path.exists(self.dir):
+                    print('her')
+                    break
+                else:
+                    err = '[Your path is not correct] '
+                    clear_output()
+            except ValueError as value:
+                clear_output()
+                # print(value)
+                continue
 
     def __start_user_command(self):
-        pass
+        status_area = 'status_area\nfor quiting type \'quit\'\nd'
+
+        prompt = 'start'
+        while True:
+            print(status_area)
+            print(prompt)
+            sleep(0.2)
+            prompt = input('line:')
+            if prompt == 'quit':
+                break
+            clear_output()
 
     def __str__(self):
         return "Net wolf < version 1>"
@@ -1006,7 +1080,7 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str):
     :return: state: boolean, name: received file's name,
     path: the path which file will be stored
     """
-    res = None
+    res = (False, None, None)
     try:
         skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         skt.connect((des.ip, des.pn))

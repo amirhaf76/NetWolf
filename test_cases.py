@@ -34,6 +34,12 @@ def check_two_file(path1: str, name1: str, path2: str, name2: str):
     return True
 
 
+class TestNetWolf(ut.TestCase):
+
+    def test_initialize(self):
+        nfb.NetWolf()
+
+
 class TestNode(ut.TestCase):
     path = TEST_PATH + os.sep + 'TestNode'
 
@@ -55,13 +61,10 @@ class TestNode(ut.TestCase):
         temp = self.node1.node_list
         for i in temp.keys():
             print(f'{i}  {temp[i]}')
-        self.node1.stop_node()
 
     def test_distribute(self):
         self.node1.start_node()
         self.node2.start_node()
-        # print(self.node1.udp_server.host_info)
-        # print(self.node2.udp_server.host_info)
         sleep(0.2)
         self.node1.distribute_discovery_message()
         sleep(1)
@@ -71,6 +74,20 @@ class TestNode(ut.TestCase):
         sleep(1)
         print(self.node1.show_state())
         print(self.node2.show_state())
+
+    def test_download_file(self):
+        self.node1.start_node()
+        self.node2.start_node()
+        sleep(0.2)
+        self.node1.distribute_discovery_message()
+        self.node2.distribute_discovery_message()
+        sleep(0.2)
+        self.node1.download_file('Awaken.mp3', self.node2.tcp_server.host_info)
+        sleep(1)
+        self.node2.download_file('BACKGROUND FULL HD (5).JPG', self.node1.tcp_server.host_info)
+        sleep(1)
+        self.node2.stop_node()
+        self.node1.stop_node()
 
 
 class TestTimerLoop(ut.TestCase):
@@ -96,6 +113,8 @@ class TestTcpServer(ut.TestCase):
         sleep(2)
         self.tcp.stop()
         sleep(1)
+        for i in self.tcp.log:
+            print(i)
 
     def download_file(self, name, isfile):
 
@@ -209,11 +228,11 @@ class TestUdpServer(ut.TestCase):
                                      self.client,
                                      self.udp.host_info,
                                      (self.udp.host_info.ip, self.udp.host_info.pn))
-        print('here 1')
+
         cmd, src_des, temp_data = nfb.extract_udp_message(skt)
-        print('here 2')
+
         self.assertEqual(nfb.ResponseData.command, cmd)
-        print('here 3')
+
         txt, temp_data = nfb.extract_response_data(temp_data)
 
         name, temp_data = nfb.extract_get_response_data(temp_data)
@@ -384,8 +403,8 @@ class TestFunctions(ut.TestCase):
 
     def test_AddressIp(self):
         ip = nfb.AddressIp(IP, 12323, None, None)
-        print(ip)
-        print(ip.get_format())
+        ip2 = nfb.AddressIp(IP, 12323, None, None)
+        self.assertEqual(ip, ip2)
 
     def test_all(self):
         self.test_get_size_of_file()
@@ -461,12 +480,12 @@ class TestFunctions(ut.TestCase):
         test_list = " 'amir' , 232, 'io3232', 546,45 | 'ali', 545, 'None', 'None'"
         temp = (test_list.encode('utf-8', 'ignore'))
 
-        # rise error
-        try:
-            temp_res = nfb.make_directory_dictionary(temp)
-            self.assertNotEqual(temp_res, self.test_address_dict)
-        except nfb.NotMatchFormat:
-            pass
+        # # rise error
+        # try:
+        #     temp_res = nfb.make_directory_dictionary(temp)
+        #     self.assertNotEqual(temp_res, self.test_address_dict)
+        # except nfb.NotMatchFormat:
+        #     pass
 
     def test_filter_directory_dictionary(self):
 
