@@ -322,7 +322,10 @@ class TcpServer(Server):
         self.log = []
 
     def run(self):
-        self.__start_server()
+        try:
+            self.__start_server()
+        except socket.error as err:
+            print(err)
 
     def stop(self):
         self.__is_end = True
@@ -417,7 +420,10 @@ class UdpServer(Server):
         self.__tcp_server = tcp_server
 
     def run(self):
-        self.__start_server()
+        try:
+            self.__start_server()
+        except socket.error as err:
+            print(err)
 
     def stop(self):
         self.__is_end = True
@@ -792,10 +798,10 @@ class Node:
 
         self.lock.release()
 
-    def show_state(self):
+    def get_state(self):
         text = f'[Node_{self.name}]:\n' \
-            f'   [UDP Server]: {self.udp_server.host_info}\n' \
-            f'   [TCP Server]: {self.tcp_server.host_info}\n'
+            f'   [UDP Server]: alive{self.udp_server.isAlive()} {self.udp_server.host_info}\n' \
+            f'   [TCP Server]: alive{self.tcp_server.isAlive()} {self.tcp_server.host_info}\n'
         node_list_txt = '   [nodelist]:'
         text += node_list_txt
         for i in self.node_list.values():
@@ -827,8 +833,6 @@ class Node:
     #     try:
     #         file = open(file_name)
     #         pass
-
-
 
     def __serialize_data(self, s_date):
         pass
@@ -873,33 +877,21 @@ class NetWolf:
 
     def __init__(self):
         print('NetWolf 1398-1399')
-        err = ''
-        while True:
-            try:
-                self.port = int(input(f'{err}Please enter port number: '))
-                break
-            except ValueError as value:
-                # print(value)
-                err = '[Your path is not correct] '
-                clear_output()
-                continue
-        err = ''
-        while True:
-            try:
-                self.dir = input(f'{err}Please enter directory of list: ')
-                if os.path.exists(self.dir):
-                    print('her')
-                    break
-                else:
-                    err = '[Your path is not correct] '
-                    clear_output()
-            except ValueError as value:
-                clear_output()
-                # print(value)
-                continue
+
+        self.prompt_info_and_create_node()
+
+        self.node.start_node()
+
+        self.is_running_distributing = True
+
+        self.timer_for_distributing = threading.Thread(target=self.__distribute_nodes, args=[])
+        self.timer_for_distributing.start()
+
+        self.__start_user_command()
 
     def __start_user_command(self):
-        status_area = 'status_area\nfor quiting type \'quit\'\nd'
+        status_area = 'for exiting application type \'quit\'\n'
+        status_area += self.node.get_state()
 
         prompt = 'start'
         while True:
@@ -907,9 +899,95 @@ class NetWolf:
             print(prompt)
             sleep(0.2)
             prompt = input('line:')
+            self.answer_command(prompt)
             if prompt == 'quit':
+                self.is_running_distributing = False
+                self.node.stop_node()
                 break
             clear_output()
+
+    def __distribute_nodes(self):
+        while self.is_running_distributing:
+            sleep(UDP_TIMER)
+            self.node.distribute_discovery_message()
+
+    def answer_command(self, prompt: str):
+
+        world = prompt.strip(os.linesep+' ').split(' ')
+        command = {'DOWNLOAD': self.node.download_file}
+        print(world)
+
+    def prompt_info_and_create_node(self):
+        def check_ip(temp_ip: str):
+            temp_ip = temp_ip.strip(os.linesep + ' ')
+            nums = temp_ip.split('.')
+
+            if not len(nums) == 4:
+                return False
+
+            for i in nums:
+                if int(i) > 255 or int(i) < 0:
+                    return False
+
+            return True
+
+        ip = None
+        port = 0
+        path = None
+        name = None
+        err = ''
+        while True:
+            try:
+                port = int(input(f'{err}Please enter port number: '))
+                err = ''
+                if port < 0 or port > 2 ** 16:
+                    raise ValueError
+                break
+            except ValueError as value:
+                # print(value)
+                err = '[Your path is not correct] '
+                clear_output()
+                continue
+
+        dir_flag = True
+        while True:
+            try:
+                if dir_flag:
+                    path = input(f'{err}Please enter directory of list: ')
+                    if os.path.exists(path):
+                        err = ''
+                        dir_flag = False
+                    else:
+                        err = '[Your path is not correct] '
+                        clear_output()
+                        continue
+
+                ip = input(f'{err}Please enter ip: ')
+                if check_ip(ip):
+                    err = ''
+                    break
+                else:
+                    err = '[Your ip is not correct] '
+
+            except ValueError as value:
+                clear_output()
+                # print(value)
+                continue
+
+        while True:
+            try:
+                name = input(f'{err}Please enter your name: ')
+                if os.path.exists(path + os.sep + name):
+                    err = '[There is name like this]'
+                    clear_output()
+                else:
+                    break
+            except ValueError as value:
+                clear_output()
+                # print(value)
+                continue
+
+        self.node = Node(name, path, ip, port)
 
     def __str__(self):
         return "Net wolf < version 1>"

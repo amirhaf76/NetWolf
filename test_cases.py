@@ -53,6 +53,7 @@ class TestNode(ut.TestCase):
 
     def test_start_stop(self):
         self.node1.start_node()
+        print(self.node1.get_state())
         sleep(1)
         self.node1.stop_node()
 
@@ -72,8 +73,8 @@ class TestNode(ut.TestCase):
         self.node1.stop_node()
         self.node2.stop_node()
         sleep(1)
-        print(self.node1.show_state())
-        print(self.node2.show_state())
+        print(self.node1.get_state())
+        print(self.node2.get_state())
 
     def test_download_file(self):
         self.node1.start_node()
