@@ -417,6 +417,8 @@ class UdpServer(Server):
         self.host_info = AddressIp(ip, port, None, None)
         self.__is_end = False
 
+        self.available_file_in_net = {}
+
         self.__tcp_server = tcp_server
 
     def run(self):
@@ -428,6 +430,28 @@ class UdpServer(Server):
     def stop(self):
         self.__is_end = True
         self.__udp_socket.close()
+
+    def find_file(self, name):
+        if self.isAlive():
+            self.dir_lock.acquire()
+            node_list = self.dis_dict.copy()
+            self.dir_lock.release()
+
+            for i in node_list.values():
+                des_node: AddressIp = i
+
+                send, hub = is_there_next_des(self.host_info,
+                                              des_node)
+
+                send_message_to_get_file(name, self.host_info,
+                                         des_node, hub)
+
+            sleep(0.7)
+
+            if self.available_file_in_net.__contains__(name):
+                return self.available_file_in_net[name]
+            else:
+                return None
 
     def __start_server(self):
         addr = self.host_info.ip
@@ -478,7 +502,7 @@ class UdpServer(Server):
         elif command == DirectoryData.command:
             self.__handle_directory_message(src_des, rec_data)
         elif command == ResponseData.command:
-            pass
+            self.__handle_response_data(bytearray(rec_data))
 
     def __handle_get_message(self, src_des: dict, rec_data: bytes):
         # decode name
@@ -487,14 +511,16 @@ class UdpServer(Server):
         # find next_destination for routing
         send, next_des = is_there_next_des(self.host_info, src_des[SRC])
 
+        print(is_there_file(self.path, name))
         # is there file
-        if is_there_file(self.path, name):
+        if is_there_file(self.path, name) and self.__tcp_server is not None:
 
             # preparing get response
-            if self.__tcp_server is None:
-                get_rsp = prepare_get_response(name, AddressIp('None', 0, 'None', 'None'))
-            else:
-                get_rsp = prepare_get_response(name, self.__tcp_server.host_info)
+            get_rsp = prepare_get_response(name, self.__tcp_server.host_info)
+            # if self.__tcp_server is None:
+            #     get_rsp = prepare_get_response(name, AddressIp('None', 0, 'None', 'None'))
+            # else:
+            #     get_rsp = prepare_get_response(name, self.__tcp_server.host_info)
 
             # preparing response for sending file
             rsp = prepare_response_data(FOUND_RESPONSE_TEXT, get_rsp)
@@ -519,6 +545,14 @@ class UdpServer(Server):
         update_proxy_of_server(self.dis_dict, self.host_info)
 
         self.dir_lock.release()
+
+    def __handle_response_data(self, rec_data: bytearray):
+        txt, temp_data = extract_response_data(rec_data)
+        print(txt)
+        print(temp_data)
+        if txt == FOUND_RESPONSE_TEXT:
+            name, addr = extract_get_response_data(temp_data)
+            self.available_file_in_net.update({name: addr})
 
 
 class Message:
@@ -613,24 +647,6 @@ class DirectoryData(Message):
         Message.__init__(self, dir_data, src, des)
 
 
-class BridgeData(Message):
-    # todo complete directory data, it needs to define its format
-    command = 'BRG'
-
-    def __init__(self, brg_data: bytearray, src: AddressIp, des: AddressIp):
-        Message.__init__(self, brg_data, src, des)
-
-
-def reassemble_mes(command, src_des, raw_data):
-    func = {DownloadData.command: DownloadData,
-            GetData.command: GetData,
-            ResponseData.command: ResponseData,
-            DirectoryData.command: DirectoryData}
-    mes = func[command](raw_data, src_des[SRC], src_des[DES])
-
-    return mes
-
-
 class File:
     def __init__(self, name, path):
         self.name = name
@@ -703,19 +719,23 @@ class Node:
         if self.udp_server.isAlive():
             self.udp_server.stop()
 
-    def download_file(self, name: str, addr: AddressIp):
+    def download_file(self, name: str):
 
-        temp = download_file_from(name,
-                                  self.tcp_server.host_info,
-                                  addr,
-                                  self.folders['DOWNLOAD'])
-        print(temp)
+        addr = self.udp_server.find_file(name)
 
-        state, name, path = temp
-        if state:
-            i = name.rfind('_', 0, len(name))
-            main_name = name[:i]
-            assemble_files(path, name, path, main_name, start_zero=True)
+        if addr is not None:
+            temp = download_file_from(name,
+                                      self.tcp_server.host_info,
+                                      addr,
+                                      self.folders['DOWNLOAD'])
+
+            state, name, path = temp
+            if state:
+                i = name.rfind('_', 0, len(name))
+                main_name = name[:i]
+                assemble_files(path, name, path, main_name, start_zero=True)
+        else:
+            pass
 
     def load_directory_in_node(self):
         """
@@ -844,30 +864,6 @@ class Node:
         pass
 
 
-class NodeTimer(threading.Thread):
-    __first = True
-
-    def __init__(self, time: float, node: Node):
-        threading.Thread.__init__(self)
-        self.time = time
-        self.node = node
-        self.__running = True
-
-    def run(self) -> None:
-        while self.__running:
-            timer = threading.Timer(self.time,
-                                    self.node.distribute_discovery_message,
-                                    [])
-            timer.start()
-            sleep(self.time + 0.05)
-        else:
-            print('end')
-
-    def stop(self):
-        self.__running = False
-        sleep(self.time + 0.05)
-
-
 class NetWolf:
     """
     This is main class of NetWolf project
@@ -913,7 +909,12 @@ class NetWolf:
 
     def answer_command(self, prompt: str):
 
-        world = prompt.strip(os.linesep+' ').split(' ')
+        prompt = prompt.strip(os.linesep+' ').split(' ')
+        world = []
+        for i in prompt:
+            if not len(i) == 0:
+                world.append(i)
+
         command = {'DOWNLOAD': self.node.download_file}
         print(world)
 

@@ -91,18 +91,6 @@ class TestNode(ut.TestCase):
         self.node1.stop_node()
 
 
-class TestTimerLoop(ut.TestCase):
-    path = TEST_PATH + os.sep + 'TestNode'
-
-    node1 = nfb.Node('node1', path, IP, 12345)
-
-    def test(self):
-        n = nfb.NodeTimer(0.5, self.node1)
-        n.start()
-        sleep(0.5)
-        n.stop()
-
-
 class TestTcpServer(ut.TestCase):
     path = TEST_PATH + os.sep + 'TestTcpServer'
     client = nfb.AddressIp('127.0.0.16', 4433, None, None)
@@ -218,9 +206,6 @@ class TestUdpServer(ut.TestCase):
         self.udp.stop()
         sleep(1)
 
-    def client_get_message(self):
-        pass
-
     def client_server(self):
         skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         skt.bind((self.client.ip, self.client.pn))
@@ -306,6 +291,28 @@ class TestUdpServer(ut.TestCase):
         print('test done')
 
         self.udp.stop()
+
+    def test_find_file(self):
+
+        path = TEST_PATH + os.sep + 'TestUdpServer'
+        dir_temp = {}
+        ip = '127.0.1.17'
+
+        temp_tcp = nfb.TcpServer(path, ip)
+        temp_udp = nfb.UdpServer(path, dir_temp, threading.Lock(), ip, 40000, temp_tcp)
+        temp_tcp.start()
+        temp_udp.start()
+
+        self.udp.start()
+        sleep(2)
+        self.udp.dis_dict.update({temp_udp.host_info.ip: temp_udp.host_info})
+        state = self.udp.find_file('BACKGROUND FULL HD (5).JPG')
+        self.assertIsNotNone(state)
+        state = self.udp.find_file('BACKGROUND.JPG')
+        self.assertIsNone(state)
+        temp_udp.stop()
+        self.udp.stop()
+        temp_tcp.stop()
 
 
 class TestFilesFunction(ut.TestCase):
