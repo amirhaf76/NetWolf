@@ -23,6 +23,7 @@ SENDING_WAS_FINISHED = '<SWF>'
 
 UDP_TIMER = 0.006
 UDP_MESSAGE_SIZ = 500 * 100
+UDP_PORT_NUMBER = 45500
 
 
 class AddressIp:
@@ -503,6 +504,8 @@ class UdpServer(Server):
             self.__handle_directory_message(src_des, rec_data)
         elif command == ResponseData.command:
             self.__handle_response_data(bytearray(rec_data))
+        # elif command == ListOfFileData.command:
+        #     self.__handle_list_of_data()
 
     def __handle_get_message(self, src_des: dict, rec_data: bytes):
         # decode name
@@ -639,6 +642,13 @@ class ResponseData(Message):
         Message.__init__(self, rsp_data, src, des)
 
 
+class ListOfFileData(Message):
+    command = 'LFD'
+
+    def __init__(self, lfd_data: bytearray, src: AddressIp, des: AddressIp):
+        Message.__init__(self, lfd_data, src, des)
+
+
 class DirectoryData(Message):
     # todo complete directory data, it needs to define its format
     command = 'DIR'
@@ -734,6 +744,7 @@ class Node:
                 i = name.rfind('_', 0, len(name))
                 main_name = name[:i]
                 assemble_files(path, name, path, main_name, start_zero=True)
+            return state
         else:
             pass
 
@@ -754,7 +765,7 @@ class Node:
                 l = []
                 for e in line:
                     l.append(e.strip(os.linesep))
-
+                print(l)
                 # name ip pn proxy_ip proxy_pn
                 if len(l) == 2:
                     temp = AddressIp(l[1],
@@ -786,6 +797,7 @@ class Node:
             for i in new_list:
                 temp.append((i.ip, i))
 
+            print(temp)
             self.node_list.update(dict(temp))
 
         except FileNotFoundError:
@@ -823,8 +835,12 @@ class Node:
             f'   [UDP Server]: alive{self.udp_server.isAlive()} {self.udp_server.host_info}\n' \
             f'   [TCP Server]: alive{self.tcp_server.isAlive()} {self.tcp_server.host_info}\n'
         node_list_txt = '   [nodelist]:'
+        self.lock.acquire()
+        values = self.node_list.values()
+        self.lock.release()
+
         text += node_list_txt
-        for i in self.node_list.values():
+        for i in values:
             text += '\n'
             text += ' ' * len(node_list_txt)
             text += f'{i}'
@@ -886,11 +902,12 @@ class NetWolf:
         self.__start_user_command()
 
     def __start_user_command(self):
-        status_area = 'for exiting application type \'quit\'\n'
-        status_area += self.node.get_state()
+
 
         prompt = 'start'
         while True:
+            status_area = 'for exiting application type \'quit\'\n'
+            status_area += self.node.get_state()
             print(status_area)
             print(prompt)
             sleep(0.2)
@@ -915,10 +932,17 @@ class NetWolf:
             if not len(i) == 0:
                 world.append(i)
 
-        command = {'DOWNLOAD': self.node.download_file}
-        print(world)
+        commands = ['get', 'load']
+
+        if world[0] == commands[0]:
+            print(self.node.download_file(world[1]))
+        elif world[0] == commands[1]:
+            self.node.load_directory_in_node()
+        else:
+            print('wrong command')
 
     def prompt_info_and_create_node(self):
+
         def check_ip(temp_ip: str):
             temp_ip = temp_ip.strip(os.linesep + ' ')
             nums = temp_ip.split('.')
@@ -934,34 +958,47 @@ class NetWolf:
 
         ip = None
         port = 0
-        path = None
-        name = None
+        path = ''
+        name = ''
+        is_entered_path = False
+        is_entered_name = False
         err = ''
-        while True:
-            try:
-                port = int(input(f'{err}Please enter port number: '))
-                err = ''
-                if port < 0 or port > 2 ** 16:
-                    raise ValueError
-                break
-            except ValueError as value:
-                # print(value)
-                err = '[Your path is not correct] '
-                clear_output()
-                continue
+        # while True:
+        #     try:
+        #         port = int(input(f'{err}Please enter port number: '))
+        #         err = ''
+        #         if port < 0 or port > 2 ** 16:
+        #             raise ValueError
+        #         break
+        #     except ValueError as value:
+        #         # print(value)
+        #         err = '[Your path is not correct] '
+        #         clear_output()
+        #         continue
 
-        dir_flag = True
         while True:
             try:
-                if dir_flag:
+                if not is_entered_path:
                     path = input(f'{err}Please enter directory of list: ')
                     if os.path.exists(path):
                         err = ''
-                        dir_flag = False
+                        is_entered_path = True
                     else:
                         err = '[Your path is not correct] '
                         clear_output()
                         continue
+
+                if not is_entered_name:
+                    name = input(f'{err}Please enter your name: ')
+                    # if os.path.exists(path + os.sep + name):
+                    #     err = '[There is name like this]'
+                    #     clear_output()
+                    #     continue
+                    # else:
+                    #     is_entered_name = True
+                    #     err = ''
+                    is_entered_name = True
+                    err = ''
 
                 ip = input(f'{err}Please enter ip: ')
                 if check_ip(ip):
@@ -975,20 +1012,20 @@ class NetWolf:
                 # print(value)
                 continue
 
-        while True:
-            try:
-                name = input(f'{err}Please enter your name: ')
-                if os.path.exists(path + os.sep + name):
-                    err = '[There is name like this]'
-                    clear_output()
-                else:
-                    break
-            except ValueError as value:
-                clear_output()
-                # print(value)
-                continue
+        # while True:
+        #     try:
+        #         name = input(f'{err}Please enter your name: ')
+        #         if os.path.exists(path + os.sep + name):
+        #             err = '[There is name like this]'
+        #             clear_output()
+        #         else:
+        #             break
+        #     except ValueError as value:
+        #         clear_output()
+        #         # print(value)
+        #         continue
 
-        self.node = Node(name, path, ip, port)
+        self.node = Node(name, path, ip, UDP_PORT_NUMBER)
 
     def __str__(self):
         return "Net wolf < version 1>"
@@ -1052,6 +1089,15 @@ def prepare_get_response(name: str, tcp_server_addr: AddressIp):
     get_addr = bytearray(get_addr, ENCODE_MODE, ERROR_ENCODING)
     get_addr_size = int.to_bytes(len(get_addr), 1, 'big', signed=False)
     return bytearray(get_name_size) + bytearray(get_addr_size) + get_name + get_addr
+
+
+def prepare_list_of_files(list_of_files: list) -> bytearray:
+    """
+    prepare proper format.  ...|<name of file>|...
+    :param list_of_files: list of name of files
+    :return: bytearray: proper format
+    """
+    return bytearray('|'.join(list_of_files).encode(ENCODE_MODE, ERROR_ENCODING))
 
 
 def send_message_to(mes: Message, next_des: tuple):
@@ -1207,6 +1253,14 @@ def extract_get_response_data(raw_data: bytearray):
     return None, None
 
 
+def extract_list_of_files_data(raw_data: bytearray):
+    # size_of_len_format = raw_data[0]
+    # len_of_format = int.from_bytes(raw_data[1:size_of_len_format+1], 'big', signed=False)
+    names = raw_data.decode(ENCODE_MODE, ERROR_ENCODING)
+    names = names.split('|')
+    return names
+
+
 def extract_check_number(data_str: bytes):
     """
     1B size of check number, read check number's bytes,
@@ -1247,3 +1301,7 @@ def update_proxy_of_server(dir_dict: dict, node_ip: AddressIp):
                 node_ip.proxy_pn = value.pn
 
     # return dir_dict
+
+
+if __name__ == '__main__':
+    NetWolf()

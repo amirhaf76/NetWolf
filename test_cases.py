@@ -4,7 +4,7 @@ import os
 import socket
 import threading
 from time import sleep
-from math import ceil
+from math import ceil, log2
 
 LIST_TEST_PATH = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Test']
 LIST_BASE_FILES_PATH = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Files_for_testing']
@@ -38,6 +38,19 @@ class TestNetWolf(ut.TestCase):
 
     def test_initialize(self):
         nfb.NetWolf()
+
+    def test_download(self):
+        path = TEST_PATH + os.sep + 'TestNetWolf'
+        node = nfb.Node('hello', path, '127.0.2.1', nfb.UDP_PORT_NUMBER)
+        node.start_node()
+        sleep(1)
+        nfb.NetWolf()
+        node.stop_node()
+
+    def test(self):
+        src = nfb.AddressIp('127.0.5.1', 15423, None, None)
+        des = nfb.AddressIp('127.0.5.9', 15423, None, None)
+        nfb.send_message_to(nfb.Message(bytearray(b'\x55'), src, des), ('127.0.0.98', 12054))
 
 
 class TestNode(ut.TestCase):
@@ -428,6 +441,8 @@ class TestFunctions(ut.TestCase):
         self.test_prepare_get_response()
         self.test_extract_download_data()
         self.test_update_proxy_of_server()
+        self.test_prepare_list_of_files()
+        self.test_extract_list_of_files_data()
 
     def test_get_size_of_file(self):
         size = ceil(7902383 / (10 ** 6))
@@ -563,6 +578,21 @@ class TestFunctions(ut.TestCase):
                      '127.0.1.24': addr[1]}
         nfb.update_proxy_of_server(dict_temp, node_ip)
         self.assertTrue(node_ip.__eq__(nfb.AddressIp('my ip', 200, IP, 4000)))
+
+    def test_prepare_list_of_files(self):
+        name_list = ['jack.mkv', 'hello.txt', 'music']
+
+        test_data = bytearray('|'.join(name_list), nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
+
+        temp_data = nfb.prepare_list_of_files(name_list)
+        self.assertEqual(test_data, temp_data)
+
+    def test_extract_list_of_files_data(self):
+        txt = 'name1|name2|name3|name4'
+        txt_byte = txt.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
+
+        txt_list = ['name1', 'name2', 'name3', 'name4']
+        self.assertListEqual(txt_list, nfb.extract_list_of_files_data(txt_byte))
 
 
 class TestSocketFunction(ut.TestCase):
