@@ -14,6 +14,8 @@ CMD_MESSAGE_LENGTH = 1
 DATA_MESSAGE_LENGTH = 3
 DATA_MESSAGE_ORDER = 'big'
 
+SHOW_STATE_BY_PRINTING_DIRECTLY = False
+
 DES = 'DES'
 SRC = 'SRC'
 
@@ -48,7 +50,6 @@ class AddressIp:
 
     def __eq__(self, o) -> bool:
         if o is self:
-            print(o is self)
             return True
         if not isinstance(o, AddressIp):
             return False
@@ -320,7 +321,7 @@ class TcpServer(Server):
         self.host_info = AddressIp(addr, port, None, None)
         self.__is_end = False
 
-        self.log = []
+        self.log = File(f'log_tcp_{addr}.txt', path)
 
     def run(self):
         try:
@@ -349,29 +350,34 @@ class TcpServer(Server):
         # save socket information
         ip, pn = self.__tcp_socket.getsockname()
         self.host_info = AddressIp(ip, pn, None, None)
+
         # start to listening
         self.__tcp_socket.listen(2)
 
-        self.log.append('[TCP Server] Server has been started')
-        self.log.append('[TCP Server] IP:{} port number:{} path:{}'.
-                        format(self.host_info.ip, self.host_info.pn, self.path))
-        print('[TCP Server] Server has been started')
-        print('[TCP Server] IP:{} port number:{} path:{}'.
-              format(self.host_info.ip, self.host_info.pn, self.path))
+        self.log.append_to_txt('[TCP Server] Server has been started\n')
+        self.log.append_to_txt('[TCP Server] IP:{} port number:{} path:{}\n'.
+                               format(self.host_info.ip, self.host_info.pn, self.path))
+
+        if SHOW_STATE_BY_PRINTING_DIRECTLY:
+            print('[TCP Server] Server has been started')
+            print('[TCP Server] IP:{} port number:{} path:{}'.
+                  format(self.host_info.ip, self.host_info.pn, self.path))
+
         while not self.__is_end:
             try:
                 temp_socket = self.__tcp_socket.accept()
                 self.__pool.submit(self.__client_handler, temp_socket[0])
             except OSError as err:
                 if self.__is_end:
-                    print('[TCP Server] Server stop manually')
-                    # self.log.append('[TCP Server] Server stop manually')
+                    print('[TCP Server] Server stop manually\n')
+                    self.log.append_to_txt('[TCP Server] Server stop manually\n')
                 else:
                     print(err)
-                    # self.log.append(err)
+                    self.log.append_to_txt(err.strerror + '\n')
 
     def __client_handler(self, skt: socket.socket):
         command, src_des, raw_data = extract_tcp_message(skt)
+        self.log.append_to_txt(' '.join([command, src_des[SRC], src_des[DES]]))
 
         if command == DownloadData.command:
             name = extract_download_data(raw_data)
@@ -468,9 +474,10 @@ class UdpServer(Server):
                                    self.host_info.proxy_ip,
                                    self.host_info.proxy_pn)
 
-        print('[UDP Server] Server has been started')
-        print('[UDP Server] IP:{} port number:{} path:{}'.
-              format(self.host_info.ip, self.host_info.pn, self.path))
+        if SHOW_STATE_BY_PRINTING_DIRECTLY:
+            print('[UDP Server] Server has been started')
+            print('[UDP Server] IP:{} port number:{} path:{}'.
+                  format(self.host_info.ip, self.host_info.pn, self.path))
 
         while not self.__is_end:
             try:
@@ -484,7 +491,7 @@ class UdpServer(Server):
                     # self.log.append(err)
 
     def __client_handler(self, command: str, src_des: dict, rec_data: bytes):
-        # print(f'get {self.host_info}')
+
         check_mes, next_des = is_there_next_des(self.host_info, src_des[DES])
 
         if check_mes:
@@ -514,7 +521,6 @@ class UdpServer(Server):
         # find next_destination for routing
         send, next_des = is_there_next_des(self.host_info, src_des[SRC])
 
-        print(is_there_file(self.path, name))
         # is there file
         if is_there_file(self.path, name) and self.__tcp_server is not None:
 
@@ -551,8 +557,7 @@ class UdpServer(Server):
 
     def __handle_response_data(self, rec_data: bytearray):
         txt, temp_data = extract_response_data(rec_data)
-        print(txt)
-        print(temp_data)
+
         if txt == FOUND_RESPONSE_TEXT:
             name, addr = extract_get_response_data(temp_data)
             self.available_file_in_net.update({name: addr})
@@ -662,8 +667,30 @@ class File:
         self.name = name
         self.path = path
 
+    def append_to_binary(self, info: bytes):
+        file = self.__open_file_for_appending(True)
+
+        file.write(info)
+
+        temp = file.name
+
+        file.close()
+
+        return temp
+
+    def append_to_txt(self, txt: str):
+        file = self.__open_file_for_appending(False)
+
+        file.write(txt)
+
+        temp = file.name
+
+        file.close()
+
+        return temp
+
     def save_data(self, data: bytearray):
-        file = self.__open_file()
+        file = self.__open_new_file()
 
         file.write(data)
 
@@ -674,7 +701,7 @@ class File:
         return temp
 
     def save_list_of_data(self, data_list: list):
-        file = self.__open_file()
+        file = self.__open_new_file()
 
         for data in data_list:
             file.write(data)
@@ -685,10 +712,18 @@ class File:
 
         return temp
 
-    def __open_file(self):
+    def __open_new_file(self):
         name = new_name_file(self.name, self.path)
 
         __f = open(self.path + '\\' + name, 'wb')
+
+        return __f
+
+    def __open_file_for_appending(self, is_binary):
+        if is_binary:
+            __f = open(self.path + '\\' + self.name, 'ab')
+        else:
+            __f = open(self.path + '\\' + self.name, 'at')
 
         return __f
 
@@ -765,7 +800,7 @@ class Node:
                 l = []
                 for e in line:
                     l.append(e.strip(os.linesep))
-                print(l)
+
                 # name ip pn proxy_ip proxy_pn
                 if len(l) == 2:
                     temp = AddressIp(l[1],
@@ -797,7 +832,6 @@ class Node:
             for i in new_list:
                 temp.append((i.ip, i))
 
-            print(temp)
             self.node_list.update(dict(temp))
 
         except FileNotFoundError:
@@ -902,14 +936,12 @@ class NetWolf:
         self.__start_user_command()
 
     def __start_user_command(self):
-
-
         prompt = 'start'
+
         while True:
             status_area = 'for exiting application type \'quit\'\n'
             status_area += self.node.get_state()
             print(status_area)
-            print(prompt)
             sleep(0.2)
             prompt = input('line:')
             self.answer_command(prompt)
@@ -917,7 +949,7 @@ class NetWolf:
                 self.is_running_distributing = False
                 self.node.stop_node()
                 break
-            clear_output()
+            os.system('cls')
 
     def __distribute_nodes(self):
         while self.is_running_distributing:
@@ -926,7 +958,7 @@ class NetWolf:
 
     def answer_command(self, prompt: str):
 
-        prompt = prompt.strip(os.linesep+' ').split(' ')
+        prompt = prompt.strip(os.linesep + ' ').split(' ')
         world = []
         for i in prompt:
             if not len(i) == 0:
@@ -934,10 +966,12 @@ class NetWolf:
 
         commands = ['get', 'load']
 
-        if world[0] == commands[0]:
-            print(self.node.download_file(world[1]))
-        elif world[0] == commands[1]:
-            self.node.load_directory_in_node()
+        if len(world) == 2:
+            if world[0] == commands[0]:
+                print(self.node.download_file(world[1]))
+        elif len(world) == 1:
+            if world[0] == commands[1]:
+                self.node.load_directory_in_node()
         else:
             print('wrong command')
 
