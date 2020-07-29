@@ -636,12 +636,22 @@ class TestFunctions(ut.TestCase):
         txt_byte = txt.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
 
         txt_list = ['name1', 'name2', 'name3', 'name4']
-        self.assertListEqual(txt_list, nfb.extract_list_of_files_data(txt_byte))
+        self.assertListEqual(txt_list, nfb.extract_list_of_files_data(bytearray(txt_byte)))
 
     def test_prepare_download_message_data(self):
         name = 'Test file'
         bi_name = bytearray(b'\x00\x09') + bytearray(name, nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
         self.assertEqual(bi_name, nfb.prepare_download_message_data(name))
+
+    def test_prepare_file_info(self):
+        info = nfb.prepare_file_info(name='<name>', partNums=5, not_valid_key=55)
+        self.assertEqual('name:<name>|partNums:5', info)
+
+    def test_extract_file_info(self):
+        info = 'name:<name>|partNums:5'
+        temp_data = nfb.extract_file_info(info)
+        temp_dict = {'name': '<name>', 'partNums': '5'}
+        self.assertDictEqual(temp_dict, temp_data)
 
 
 class TestSocketFunction(ut.TestCase):
