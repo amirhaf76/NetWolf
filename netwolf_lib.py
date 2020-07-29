@@ -478,6 +478,7 @@ class UdpServer(Server):
         if self.isAlive():
             self.dir_lock.acquire()
             node_list = self.dis_dict.copy()
+            self.available_file_in_net = {}
             self.dir_lock.release()
 
             for i in node_list.values():
@@ -489,11 +490,11 @@ class UdpServer(Server):
                 send_message_to_get_file(name, self.host_info,
                                          des_node, hub)
 
-            sleep(1)
+            sleep(0.7)
 
             if self.available_file_in_net.__contains__(name):
                 # todo need to reload it
-                return self.available_file_in_net[name]
+                return self.available_file_in_net[name][0]
             else:
                 return None
 
@@ -594,7 +595,11 @@ class UdpServer(Server):
         if txt == FOUND_RESPONSE_TEXT:
             name, addr = extract_get_response_data(temp_data)
             # todo update completley
-            self.available_file_in_net.update({name: addr})
+            if self.available_file_in_net.__contains__(name):
+                new_list = self.available_file_in_net[name].append(addr)
+                self.available_file_in_net.update({name: new_list})
+            else:
+                self.available_file_in_net.update({name: [addr]})
 
 
 class Message:
@@ -1139,6 +1144,25 @@ class NotMatchFormat(Exception):
 
 
 # end of classes
+def prepare_file_info(**kwargs):
+    info = []
+    keys = ['name', 'partNums']
+    for k in kwargs.keys():
+        if k in keys:
+            info.append(f'{k}:{kwargs[k]}')
+    return '|'.join(info)
+
+
+def extract_file_info(txt: str):
+    info = {}
+    keys = ['name', 'partNums']
+    for k in txt.split('|'):
+        key, value = k.split(':')
+        if key in keys:
+            info.update({key: value})
+    return info
+
+
 def prepare_directory_message(addr_dict: dict):
     """
     dict = { 'ip' : AddressIp(ip, portNum, proxy Ip, proxyPortNumber)}
@@ -1332,6 +1356,7 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str):
         raw_data = prepare_download_message_data(name)
         download_mes = DownloadData(raw_data, src, des)
 
+        skt.settimeout(3)
         skt.send(download_mes.get_data())
 
         cmd, src_des, temp_data = extract_tcp_message(skt)
