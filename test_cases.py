@@ -80,8 +80,9 @@ class TestNode(ut.TestCase):
         self.node1.start_node()
         self.node2.start_node()
         sleep(0.2)
+        print(self.node1.get_state())
+        print(self.node2.get_state())
         self.node1.distribute_discovery_message()
-        sleep(1)
         self.node2.distribute_discovery_message()
         self.node1.stop_node()
         self.node2.stop_node()
@@ -89,17 +90,32 @@ class TestNode(ut.TestCase):
         print(self.node1.get_state())
         print(self.node2.get_state())
 
+    def test_save_directory(self):
+        self.node1.start_node()
+        self.node2.start_node()
+        self.node1.distribute_discovery_message()
+        sleep(1)
+        print(self.node1.get_state())
+        print(self.node2.get_state())
+        self.node2.save_directory()
+
+        self.node1.stop_node()
+        self.node2.stop_node()
+
     def test_download_file(self):
         self.node1.start_node()
         self.node2.start_node()
         sleep(0.2)
         self.node1.distribute_discovery_message()
         self.node2.distribute_discovery_message()
-        sleep(0.2)
-        self.node1.download_file('Awaken.mp3', self.node2.tcp_server.host_info)
         sleep(1)
-        self.node2.download_file('BACKGROUND FULL HD (5).JPG', self.node1.tcp_server.host_info)
+        print(self.node1.get_state())
+        print(self.node2.get_state())
+        print(self.node1.download_file('Awaken.mp3'))
         sleep(1)
+        print(self.node2.download_file('BACKGROUND FULL HD (5).JPG'))
+        sleep(.5)
+        print(self.node1.download_file('Aw4aken.mp3'))
         self.node2.stop_node()
         self.node1.stop_node()
 
@@ -115,13 +131,11 @@ class TestTcpServer(ut.TestCase):
         sleep(2)
         self.tcp.stop()
         sleep(1)
-        for i in self.tcp.log:
-            print(i)
 
     def download_file(self, name, isfile):
 
-        dn = nfb.prepare_response_data(name, bytearray(0))
-        dn = nfb.ResponseData(dn, self.client, self.tcp.host_info)
+        dn = nfb.prepare_download_message_data(name)
+        dn = nfb.DownloadData(dn, self.client, self.tcp.host_info)
 
         skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -158,45 +172,60 @@ class TestTcpServer(ut.TestCase):
         sleep(0.2)
         self.tcp.stop()
 
-    def test_response_not_found(self):
+    def test_download(self):
         self.tcp.start()
         name = 'BACKGROUND FULL HD (5).JPG'
-
         sleep(0.2)
-        nfb.download_file_from(name, self.tcp.host_info, self.tcp.host_info, self.tcp.path)
+        temp = nfb.download_file_from(name,
+                                      self.tcp.host_info,
+                                      self.tcp.host_info,
+                                      self.tcp.path+os.sep+'test_download')
+        self.assertTrue(temp[0])
+        self.assertEqual('F:\\Amir\\University\\Computer Network\\Project\\NetWolf\\Test\\TestTcpServer\\test_download',
+                         temp[2])
         self.tcp.stop()
 
-    def test(self):
-        addr = ('127.0.0.15', 24562)
+    def test_1(self):
+        self.tcp.start()
+        name = 'BACKGROUND FULL HD (5).JPG'
+        sleep(0.2)
 
-        def server(addr):
-            skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            skt.bind(addr)
+        skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        skt.connect((self.tcp.host_info.ip, self.tcp.host_info.pn))
 
-            skt.listen(4)
-            s, addr = skt.accept()
-            print(addr)
-            skt.close()
-            buff = s.recv(4)
-            print(buff)
-            s.send(b'\x38\x56\x09\x38')
-            s.close()
+        dl = nfb.prepare_download_message_data(name)
+        dl = nfb.DownloadData(dl, self.tcp.host_info, self.tcp.host_info)
 
-        def client(addr):
-            skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            skt.connect(addr)
+        skt.send(dl.get_data())
+        print(nfb.extract_tcp_message(skt))
 
-            skt.send(bytearray([12, 54, 78, 85]))
-            print(bytearray([12, 54, 78, 85]))
-            buff = skt.recv(4)
-            print(buff)
-            print(addr)
+        try:
+            flag = True
 
-        t1 = threading.Thread(target=server, args=[addr])
-        t2 = threading.Thread(target=client, args=[addr])
+            def td():
+                global flag
+                flag = False
+                skt.close()
 
-        t1.start()
-        t2.start()
+            t = threading.Timer(3, td, [])
+            t.start()
+
+            while flag:
+                cmd, src, data = nfb.extract_tcp_message(skt)
+                file = nfb.File('test', 'F:\\Amir\\University\\Computer Network\\' +
+                                      'Project\\NetWolf\\' +
+                                      'Test\\TestTcpServer\\test_download')
+                file.save_data(data)
+                print(cmd)
+                print(src)
+                print(data)
+
+        except socket.error as err:
+            print(err)
+        self.tcp.stop()
+
+    # def test(self):
+
 
 
 class TestUdpServer(ut.TestCase):
@@ -228,20 +257,13 @@ class TestUdpServer(ut.TestCase):
                                      self.udp.host_info,
                                      (self.udp.host_info.ip, self.udp.host_info.pn))
 
-        cmd, src_des, temp_data = nfb.extract_udp_message(skt)
-
-        self.assertEqual(nfb.ResponseData.command, cmd)
-
-        txt, temp_data = nfb.extract_response_data(temp_data)
-
-        name, temp_data = nfb.extract_get_response_data(temp_data)
-
-        self.assertEqual(nfb.NOT_FOUND_RESPONSE_TEXT, txt)
-        self.assertIsNone(temp_data)
-        self.assertIsNone(name)
-
         existence_file = 'BACKGROUND FULL HD (5).JPG'
         nfb.send_message_to_get_file(existence_file,
+                                     self.client,
+                                     self.udp.host_info,
+                                     (self.udp.host_info.ip, self.udp.host_info.pn))
+
+        nfb.send_message_to_get_file('Test.txt',
                                      self.client,
                                      self.udp.host_info,
                                      (self.udp.host_info.ip, self.udp.host_info.pn))
@@ -254,6 +276,15 @@ class TestUdpServer(ut.TestCase):
         self.assertEqual(nfb.FOUND_RESPONSE_TEXT, txt)
         self.assertEqual(self.tcp.host_info, temp_data)
         self.assertEqual(existence_file, name)
+
+        md, src_des, temp_data = nfb.extract_udp_message(skt)
+        self.assertEqual(nfb.ResponseData.command, cmd)
+        txt, temp_data = nfb.extract_response_data(temp_data)
+        name, temp_data = nfb.extract_get_response_data(temp_data)
+
+        self.assertEqual(nfb.FOUND_RESPONSE_TEXT, txt)
+        self.assertEqual(self.tcp.host_info, temp_data)
+        self.assertEqual('Test.txt', name)
         skt.close()
 
     def client_discovery(self):
@@ -299,9 +330,7 @@ class TestUdpServer(ut.TestCase):
     def test_get_message_handler(self):
         self.udp.start()
 
-        print('test start')
         self.client_server()
-        print('test done')
 
         self.udp.stop()
 
@@ -323,6 +352,8 @@ class TestUdpServer(ut.TestCase):
         self.assertIsNotNone(state)
         state = self.udp.find_file('BACKGROUND.JPG')
         self.assertIsNone(state)
+        state = self.udp.find_file('BACKGROUND FULL HD (5).JPG')
+        self.assertIsNotNone(state)
         temp_udp.stop()
         self.udp.stop()
         temp_tcp.stop()
@@ -425,7 +456,13 @@ class TestFunctions(ut.TestCase):
     def test_AddressIp(self):
         ip = nfb.AddressIp(IP, 12323, None, None)
         ip2 = nfb.AddressIp(IP, 12323, None, None)
+        ip3 = nfb.AddressIp('127.2.6.4', 4561, IP, None)
+        ip4 = nfb.AddressIp('127.2.6.4', 4561, IP, 5523)
         self.assertEqual(ip, ip2)
+        print(ip.get_file_format())
+        print(ip2.get_file_format())
+        print(ip3.get_file_format())
+        print(ip4.get_file_format())
 
     def test_all(self):
         self.test_get_size_of_file()
@@ -443,6 +480,7 @@ class TestFunctions(ut.TestCase):
         self.test_update_proxy_of_server()
         self.test_prepare_list_of_files()
         self.test_extract_list_of_files_data()
+        self.test_prepare_download_message_data()
 
     def test_get_size_of_file(self):
         size = ceil(7902383 / (10 ** 6))
@@ -520,9 +558,9 @@ class TestFunctions(ut.TestCase):
                              d)
 
     def test_prepare_directory_message(self):
-        test = {'amir': nfb.AddressIp('amir', 232, 'io3232', 54645),
-                'ali': nfb.AddressIp('ali', 545, None, None)}
-        test_str = '{ip}, {portNum}, {ipp}, {ppn}|{ip1}, {portNum1}, {ipp1}, {ppn1}'.format(
+        test = {'amir': nfb.AddressIp('amir', 232, 'io3232', 54645, 'node_name'),
+                'ali': nfb.AddressIp('ali', 545, None, None, 'node_name1')}
+        test_str = '{ip}, {portNum}, {ipp}, {ppn}, {name}|{ip1}, {portNum1}, {ipp1}, {ppn1}, {name1}'.format(
             ip='amir',
             portNum=232,
             ipp='io3232',
@@ -530,8 +568,14 @@ class TestFunctions(ut.TestCase):
             ip1='ali',
             portNum1=545,
             ipp1=None,
-            ppn1=None
+            ppn1=None,
+            name='node_name',
+            name1='node_name1'
         )
+        print(test['amir'])
+        print(test['amir'].get_file_format())
+        print(test['amir'].get_format())
+        print(test_str)
         mes = nfb.prepare_directory_message(test)
         self.assertEqual(mes, test_str)
 
@@ -562,7 +606,7 @@ class TestFunctions(ut.TestCase):
     def test_extract_download_data(self):
         name = '<DOWNLOAD>'
         name_len = int.to_bytes(len(name),
-                                1,
+                                2,
                                 'big',
                                 signed=False)
         dd = bytearray(name_len) + name.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
@@ -593,6 +637,11 @@ class TestFunctions(ut.TestCase):
 
         txt_list = ['name1', 'name2', 'name3', 'name4']
         self.assertListEqual(txt_list, nfb.extract_list_of_files_data(txt_byte))
+
+    def test_prepare_download_message_data(self):
+        name = 'Test file'
+        bi_name = bytearray(b'\x00\x09') + bytearray(name, nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
+        self.assertEqual(bi_name, nfb.prepare_download_message_data(name))
 
 
 class TestSocketFunction(ut.TestCase):

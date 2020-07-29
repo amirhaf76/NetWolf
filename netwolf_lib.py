@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 from time import sleep
 from IPython.display import clear_output
+import shutil
 
 ENCODE_MODE = 'utf-8'
 ERROR_ENCODING = 'backslashreplace'
@@ -14,7 +15,7 @@ CMD_MESSAGE_LENGTH = 1
 DATA_MESSAGE_LENGTH = 3
 DATA_MESSAGE_ORDER = 'big'
 
-SHOW_STATE_BY_PRINTING_DIRECTLY = False
+SHOW_STATE_BY_PRINTING_DIRECTLY = True
 
 DES = 'DES'
 SRC = 'SRC'
@@ -29,24 +30,46 @@ UDP_PORT_NUMBER = 45500
 
 
 class AddressIp:
+    index = 0
 
-    def __init__(self, ip: str, pn: int, proxy_ip: str = None, proxy_pn: int = None):
+    def __init__(self, ip: str, pn: int, proxy_ip: str = None, proxy_pn: int = None, name: str = None):
         self.ip = ip
         self.pn = pn
         self.proxy_ip = proxy_ip
         self.proxy_pn = proxy_pn
 
+        if name is None:
+            self.name = f'node{self.index}'
+            AddressIp.index += 1
+        else:
+            self.name = name
+
     def __str__(self):
         return (f'ip: {self.ip}, ' +
                 f'pn: {self.pn}, ' +
                 f'proxy_ip: {self.proxy_ip}, ' +
-                f'proxy_pn: {self.proxy_pn}')
+                f'proxy_pn: {self.proxy_pn}, ' +
+                f'name: {self.name}')
 
     def get_format(self):
         return (f'{self.ip}, ' +
                 f'{self.pn}, ' +
                 f'{self.proxy_ip}, ' +
-                f'{self.proxy_pn}')
+                f'{self.proxy_pn}, ' +
+                f'{self.name}')
+
+    def get_file_format(self):
+
+        if self.proxy_ip is not None:
+            return (f'{self.name}' +
+                    f' {self.ip}' +
+                    f' {self.pn}' +
+                    f' {self.proxy_ip}' +
+                    f' {self.proxy_pn}')
+
+        return (f'{self.name}' +
+                f' {self.ip}' +
+                f' {self.pn}')
 
     def __eq__(self, o) -> bool:
         if o is self:
@@ -111,7 +134,7 @@ def extract_address_ip_format(raw_data: bytes):
     res = []
     for t in str_list:
         temp_list = t.split(',')
-        if len(temp_list) == 4:
+        if len(temp_list) == 4 or len(temp_list) == 5:
             ipp = None
             ppn = None
 
@@ -120,23 +143,33 @@ def extract_address_ip_format(raw_data: bytes):
             if not temp_list[3].strip(' \'') == 'None':
                 ppn = int(temp_list[3])
 
-            temp_address_ip = AddressIp(temp_list[0].strip(' \''),
-                                        int(temp_list[1]),
-                                        ipp,
-                                        ppn)
+            if len(temp_list) == 5:
+                temp_address_ip = AddressIp(temp_list[0].strip(' \''),
+                                            int(temp_list[1]),
+                                            ipp,
+                                            ppn,
+                                            temp_list[4].strip(' \''))
+            else:
+                temp_address_ip = AddressIp(temp_list[0].strip(' \''),
+                                            int(temp_list[1]),
+                                            ipp,
+                                            ppn)
 
             res.append(temp_address_ip)
         else:
-            print('[Error] extract_address_ip_format')
+            print(f'[Error] extract_address_ip_format: {temp_list}')
     return res
 
 
 def extract_source_and_destination(raw_data: bytearray):
     if not len(raw_data) == 0:
         src_des = extract_address_ip_format(raw_data)
-        dict_src_dec = {SRC: src_des[0],
-                        DES: src_des[1]}
-        return dict_src_dec
+        try:
+            dict_src_dec = {SRC: src_des[0],
+                            DES: src_des[1]}
+            return dict_src_dec
+        except IndexError as err:
+            print(err)
     return {SRC: None, DES: None}
 
 
@@ -144,8 +177,8 @@ def extract_tcp_message(skt: socket.socket):
     command_siz = int.from_bytes(skt.recv(CMD_MESSAGE_LENGTH), 'big', signed=False)
     addr_siz = int.from_bytes(skt.recv(ADDR_MESSAGE_LENGTH), 'big', signed=False)
     data_siz = int.from_bytes(skt.recv(DATA_MESSAGE_LENGTH), 'big', signed=False)
-
     command = skt.recv(command_siz).decode(ENCODE_MODE, ERROR_ENCODING)
+
     addr = extract_source_and_destination(bytearray(skt.recv(addr_siz)))
     data = skt.recv(data_siz)
 
@@ -311,14 +344,14 @@ class Server(threading.Thread):
 class TcpServer(Server):
 
     # its better to give it address of localhost
-    def __init__(self, path: str, addr, port=0):
+    def __init__(self, path: str, addr, port=0, name: str = None):
         Server.__init__(self)
 
         self.__pool = ThreadPoolExecutor(max_workers=5)
         self.__tcp_socket = None
 
         self.path = path
-        self.host_info = AddressIp(addr, port, None, None)
+        self.host_info = AddressIp(addr, port, None, None, name)
         self.__is_end = False
 
         self.log = File(f'log_tcp_{addr}.txt', path)
@@ -338,6 +371,7 @@ class TcpServer(Server):
         # get local address
         addr = self.host_info.ip
         port = self.host_info.pn
+        name = self.host_info.name
         if addr is None:
             addr = socket.gethostbyname(socket.gethostname())
 
@@ -349,7 +383,7 @@ class TcpServer(Server):
 
         # save socket information
         ip, pn = self.__tcp_socket.getsockname()
-        self.host_info = AddressIp(ip, pn, None, None)
+        self.host_info = AddressIp(ip, pn, None, None, name)
 
         # start to listening
         self.__tcp_socket.listen(2)
@@ -377,12 +411,14 @@ class TcpServer(Server):
 
     def __client_handler(self, skt: socket.socket):
         command, src_des, raw_data = extract_tcp_message(skt)
-        self.log.append_to_txt(' '.join([command, src_des[SRC], src_des[DES]]))
-
+        # print(command)
+        # print(src_des[SRC], src_des[DES])
+        # print(raw_data)
         if command == DownloadData.command:
             name = extract_download_data(raw_data)
 
             if is_there_file(self.path, name):
+                # siz = get_byte_size_of_file(self.path, name)
                 response_found(skt, name, src_des[DES], src_des[SRC])
                 self.__send(skt, name, src_des[DES], src_des[SRC])
             else:
@@ -413,7 +449,7 @@ class UdpServer(Server):
     def __init__(self, path: str,
                  dir_dict: dict,
                  dir_lock: threading.Lock,
-                 ip, port, tcp_server: TcpServer = None):
+                 ip, port, tcp_server: TcpServer = None, name: str = None):
 
         Server.__init__(self)
 
@@ -421,7 +457,7 @@ class UdpServer(Server):
         self.path = path
         self.dis_dict = dir_dict
         self.dir_lock = dir_lock
-        self.host_info = AddressIp(ip, port, None, None)
+        self.host_info = AddressIp(ip, port, None, None, name)
         self.__is_end = False
 
         self.available_file_in_net = {}
@@ -453,9 +489,10 @@ class UdpServer(Server):
                 send_message_to_get_file(name, self.host_info,
                                          des_node, hub)
 
-            sleep(0.7)
+            sleep(1)
 
             if self.available_file_in_net.__contains__(name):
+                # todo need to reload it
                 return self.available_file_in_net[name]
             else:
                 return None
@@ -463,6 +500,7 @@ class UdpServer(Server):
     def __start_server(self):
         addr = self.host_info.ip
         port = self.host_info.pn
+        name = self.host_info.name
         if addr is None:
             addr = socket.gethostbyname(socket.gethostname())
 
@@ -472,7 +510,8 @@ class UdpServer(Server):
         self.host_info = AddressIp(temp_tuple[0],
                                    temp_tuple[1],
                                    self.host_info.proxy_ip,
-                                   self.host_info.proxy_pn)
+                                   self.host_info.proxy_pn,
+                                   name)
 
         if SHOW_STATE_BY_PRINTING_DIRECTLY:
             print('[UDP Server] Server has been started')
@@ -511,46 +550,40 @@ class UdpServer(Server):
             self.__handle_directory_message(src_des, rec_data)
         elif command == ResponseData.command:
             self.__handle_response_data(bytearray(rec_data))
-        # elif command == ListOfFileData.command:
-        #     self.__handle_list_of_data()
 
     def __handle_get_message(self, src_des: dict, rec_data: bytes):
         # decode name
         name = rec_data.decode(ENCODE_MODE, ERROR_ENCODING)
 
-        # find next_destination for routing
-        send, next_des = is_there_next_des(self.host_info, src_des[SRC])
-
         # is there file
         if is_there_file(self.path, name) and self.__tcp_server is not None:
 
+            # find next_destination for routing
+            send, next_des = is_there_next_des(self.host_info, src_des[SRC])
+
             # preparing get response
             get_rsp = prepare_get_response(name, self.__tcp_server.host_info)
-            # if self.__tcp_server is None:
-            #     get_rsp = prepare_get_response(name, AddressIp('None', 0, 'None', 'None'))
-            # else:
-            #     get_rsp = prepare_get_response(name, self.__tcp_server.host_info)
 
             # preparing response for sending file
             rsp = prepare_response_data(FOUND_RESPONSE_TEXT, get_rsp)
 
             # send data as an ResponseData
             send_response_message_to(rsp, self.host_info, src_des[SRC], next_des)
-        else:
-            # preparing response for sending file
-            rsp = prepare_response_data(NOT_FOUND_RESPONSE_TEXT, bytearray(0))
-
-            # send data as an ResponseData
-            send_response_message_to(rsp, self.host_info, src_des[SRC], next_des)
 
     def __handle_directory_message(self, src_des: dict, rec_data: bytes):
+
+        # extract addresses and make them dictionary
         new_dir_dict = make_directory_dictionary(rec_data)
+
+        # adding sender and omit itself
         new_dir_dict = filter_directory_dictionary(self.host_info, src_des[SRC], new_dir_dict)
 
         self.dir_lock.acquire()
 
+        # update addresses
         self.dis_dict.update(new_dir_dict)
 
+        # update proxy
         update_proxy_of_server(self.dis_dict, self.host_info)
 
         self.dir_lock.release()
@@ -560,6 +593,7 @@ class UdpServer(Server):
 
         if txt == FOUND_RESPONSE_TEXT:
             name, addr = extract_get_response_data(temp_data)
+            # todo update completley
             self.available_file_in_net.update({name: addr})
 
 
@@ -627,9 +661,16 @@ class Message:
 
 
 class GetData(Message):
+
     command = 'GET'
 
     def __init__(self, get_data: bytearray, src: AddressIp, des: AddressIp):
+        """
+        get_data is byte array of file's name
+        :param get_data:
+        :param src:
+        :param des:
+        """
         Message.__init__(self, get_data, src, des)
 
 
@@ -644,6 +685,12 @@ class ResponseData(Message):
     command = 'RSP'
 
     def __init__(self, rsp_data: bytearray, src: AddressIp, des: AddressIp):
+        """
+        response is always text + some data in byte array
+        :param rsp_data:
+        :param src:
+        :param des:
+        """
         Message.__init__(self, rsp_data, src, des)
 
 
@@ -747,9 +794,9 @@ class Node:
         # make folder
         self.__create_directory()
 
-        self.tcp_server = TcpServer(self.folders['DOWNLOAD'], ip, port=0)
+        self.tcp_server = TcpServer(self.folders['DOWNLOAD'], ip, port=0, name=name)
         self.udp_server = UdpServer(self.folders['DOWNLOAD'], self.node_list, self.lock,
-                                    ip, port, self.tcp_server)
+                                    ip, port, self.tcp_server, name=name)
 
     def start_node(self):
         self.load_directory_in_node()
@@ -767,6 +814,7 @@ class Node:
     def download_file(self, name: str):
 
         addr = self.udp_server.find_file(name)
+        print(name, addr)
 
         if addr is not None:
             temp = download_file_from(name,
@@ -779,9 +827,11 @@ class Node:
                 i = name.rfind('_', 0, len(name))
                 main_name = name[:i]
                 assemble_files(path, name, path, main_name, start_zero=True)
+                # shutil.move(self.folders['TEMP'] + os.sep + main_name, path + os.sep + main_name)
+
             return state
         else:
-            pass
+            return False
 
     def load_directory_in_node(self):
         """
@@ -799,32 +849,37 @@ class Node:
                 line = line.split(' ')
                 l = []
                 for e in line:
-                    l.append(e.strip(os.linesep))
 
+                    l.append(e.strip(os.linesep))
                 # name ip pn proxy_ip proxy_pn
+
                 if len(l) == 2:
                     temp = AddressIp(l[1],
                                      self.port,
                                      None,
-                                     None)
+                                     None,
+                                     l[0])
                     new_list.append(temp)
                 elif len(l) == 3:
                     temp = AddressIp(l[1],
                                      int(l[2]),
                                      None,
-                                     None)
+                                     None,
+                                     l[0])
                     new_list.append(temp)
                 elif len(l) == 4:
                     temp = AddressIp(l[1],
                                      int(l[2]),
                                      l[3],
-                                     None)
+                                     None,
+                                     l[0])
                     new_list.append(temp)
-                elif len(l) == 4:
+                elif len(l) == 5:
                     temp = AddressIp(l[1],
                                      int(l[2]),
                                      l[3],
-                                     int(l[4]))
+                                     int(l[4]),
+                                     l[0])
                     new_list.append(temp)
             dir_file.close()
 
@@ -836,10 +891,11 @@ class Node:
 
         except FileNotFoundError:
             print('there is not find dir_file.txt')
-        except ValueError:
+        except ValueError as v:
             dir_file.close()
-            print('dir_file wasn\'t matched with format(<name> <ip> {})'
-                  .format('<proxy ip if it has proxy ip>'))
+            print('dir_file wasn\'t matched with format(<name> <ip> {}) {}'
+                  .format('<proxy ip if it has proxy ip>', self.name))
+            print(v)
         except Exception as err:
             print(err)
         self.lock.release()
@@ -866,8 +922,8 @@ class Node:
 
     def get_state(self):
         text = f'[Node_{self.name}]:\n' \
-            f'   [UDP Server]: alive{self.udp_server.isAlive()} {self.udp_server.host_info}\n' \
-            f'   [TCP Server]: alive{self.tcp_server.isAlive()} {self.tcp_server.host_info}\n'
+            f'   [UDP Server]: alive:{self.udp_server.isAlive()} {self.udp_server.host_info}\n' \
+            f'   [TCP Server]: alive:{self.tcp_server.isAlive()} {self.tcp_server.host_info}\n'
         node_list_txt = '   [nodelist]:'
         self.lock.acquire()
         values = self.node_list.values()
@@ -880,6 +936,27 @@ class Node:
             text += f'{i}'
         return text
 
+    def save_directory(self):
+        file_name = 'dir_file.txt'
+        file_addr = self.folders['DIR'] + os.sep + file_name
+
+        self.lock.acquire()
+        file_new_data = self.node_list.copy()
+        self.lock.release()
+
+        try:
+            file = open(file_addr, 'wt')
+
+            for i in file_new_data.values():
+                line: AddressIp = i
+
+                file.write(line.get_file_format() + '\n')
+
+            file.close()
+
+        except OSError:
+            print('[Error] save_directory')
+
     def __create_directory(self):
         temp = self.path + os.sep + f'Node_{self.name}'
         os.makedirs(temp, exist_ok=True)
@@ -888,21 +965,11 @@ class Node:
 
         os.makedirs(temp + 'download', exist_ok=True)
         os.makedirs(temp + 'dir_file', exist_ok=True)
+        os.makedirs(temp + 'temp_data', exist_ok=True)
         self.folders = {'DOWNLOAD': temp + 'download',
-                        'DIR': temp + 'dir_file'}
+                        'DIR': temp + 'dir_file',
+                        'TEMP': temp + 'temp_data'}
         # print(self.folders)
-
-    # def save_directory(self):
-    #     file_name = 'dir_file'
-    #     file_addr = self.folders['DIR'] + os.sep + file_name
-    #
-    #     self.lock.acquire()
-    #     file_new_data = self.node_list.copy()
-    #     self.lock.release()
-    #
-    #     try:
-    #         file = open(file_name)
-    #         pass
 
     def __serialize_data(self, s_date):
         pass
@@ -1083,13 +1150,15 @@ def prepare_directory_message(addr_dict: dict):
     for key in addr_dict.keys():
         value: AddressIp = addr_dict[key]
         if value.__class__ is AddressIp:
-            temp = '{ip}, {portNum}, {pip}, {ppn}'.format(ip=value.ip,
-                                                          portNum=value.pn,
-                                                          pip=value.proxy_ip,
-                                                          ppn=value.proxy_pn)
+            temp = '{ip}, {portNum}, {pip}, {ppn}, {name}'.format(ip=value.ip,
+                                                                  portNum=value.pn,
+                                                                  pip=value.proxy_ip,
+                                                                  ppn=value.proxy_pn,
+                                                                  name=value.name)
             res.append(temp)
         else:
             print('[Error] prepare_directory_message')
+
     return '|'.join(res)
 
 
@@ -1111,7 +1180,7 @@ def prepare_response_data(rsp_txt: str, rsp_raw_data: bytearray):
 
 def prepare_get_response(name: str, tcp_server_addr: AddressIp):
     """
-    its not suitable!!!!!!!
+    get_response: name + tcp_server_address
     :param name:
     :param tcp_server_addr:
     :return:
@@ -1123,6 +1192,11 @@ def prepare_get_response(name: str, tcp_server_addr: AddressIp):
     get_addr = bytearray(get_addr, ENCODE_MODE, ERROR_ENCODING)
     get_addr_size = int.to_bytes(len(get_addr), 1, 'big', signed=False)
     return bytearray(get_name_size) + bytearray(get_addr_size) + get_name + get_addr
+
+
+def prepare_download_message_data(name: str):
+    return bytearray(int.to_bytes(len(name), 2, 'big', signed=False)) \
+            + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
 
 
 def prepare_list_of_files(list_of_files: list) -> bytearray:
@@ -1192,6 +1266,7 @@ def recv_data(skt: socket.socket, path: str):
     # what is stored path
     stored_path = None
 
+    files = []
     while running:
         # extract message
         command, src_des, raw_data = extract_tcp_message(skt)
@@ -1207,24 +1282,34 @@ def recv_data(skt: socket.socket, path: str):
             try:
                 if first:
                     name = File(txt, path).save_data(file_data)
+                    files.append(name)
                     point = name.rfind('\\', 0, len(name))
                     stored_path = name[:point]
                     name = name[1 + point:]
                     first = False
                 else:
-                    File(txt, path).save_data(file_data)
+                    files.append(File(txt, path).save_data(file_data))
             except IOError:
                 print('[Error] recv_data: IOError')
                 is_successful = False
                 name = None
                 stored_path = None
-                running = False
+                break
             except Exception:
                 print('[Error] recv_data: Error')
                 is_successful = False
                 name = None
                 stored_path = None
-                running = False
+                break
+        else:
+            is_successful = False
+            name = None
+            stored_path = None
+            break
+
+    if not is_successful:
+        for i in files:
+            os.remove(i)
 
     return is_successful, name, stored_path
 
@@ -1244,7 +1329,7 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str):
         skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         skt.connect((des.ip, des.pn))
 
-        raw_data = bytearray([len(name)]) + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
+        raw_data = prepare_download_message_data(name)
         download_mes = DownloadData(raw_data, src, des)
 
         skt.send(download_mes.get_data())
@@ -1258,15 +1343,16 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str):
                 res = recv_data(skt, path)
 
         skt.close()
-    except socket.error:
+    except socket.error as err:
+        print(err)
         print('[Error] download_file_from: error in socket')
 
     return res
 
 
 def extract_download_data(raw_data: bytearray):
-    name_siz = raw_data[0]
-    name = raw_data[1:name_siz + 1].decode(ENCODE_MODE, ERROR_ENCODING)
+    name_siz = int.from_bytes(raw_data[:2], 'big', signed=False)
+    name = raw_data[2:name_siz + 2].decode(ENCODE_MODE, ERROR_ENCODING)
     return name
 
 
@@ -1333,8 +1419,10 @@ def update_proxy_of_server(dir_dict: dict, node_ip: AddressIp):
             if host == value.ip:
                 node_ip.proxy_ip = value.ip
                 node_ip.proxy_pn = value.pn
+            return
 
-    # return dir_dict
+        node_ip.proxy_pn = None
+        node_ip.proxy_pn = None
 
 
 if __name__ == '__main__':
