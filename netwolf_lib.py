@@ -999,6 +999,7 @@ class Node:
             for i in new_list:
                 temp.append((i.ip, i))
 
+            self.node_list.clear()
             self.node_list.update(dict(temp))
 
         except FileNotFoundError:
@@ -1076,10 +1077,8 @@ class Node:
 
         os.makedirs(temp + 'download', exist_ok=True)
         os.makedirs(temp + 'dir_file', exist_ok=True)
-        os.makedirs(temp + 'temp_data', exist_ok=True)
         self.folders = {'DOWNLOAD': temp + 'download',
-                        'DIR': temp + 'dir_file',
-                        'TEMP': temp + 'temp_data'}
+                        'DIR': temp + 'dir_file'}
 
 
 class NetWolf:
@@ -1425,7 +1424,7 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str, sho
                 info = extract_get_response_data(temp_data)
                 if show:
                     print('{} is donwloading :'.format(info['name']), end='')
-                res = recv_data(skt, path, info['partNums'])
+                res = recv_data(skt, path)
 
         skt.close()
     except socket.error as err:

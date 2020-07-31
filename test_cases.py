@@ -47,11 +47,6 @@ class TestNetWolf(ut.TestCase):
         nfb.NetWolf()
         node.stop_node()
 
-    def test(self):
-        src = nfb.AddressIp('127.0.5.1', 15423, None, None)
-        des = nfb.AddressIp('127.0.5.9', 15423, None, None)
-        nfb.send_message_to(nfb.Message(bytearray(b'\x55'), src, des), ('127.0.0.98', 12054))
-
 
 class TestNode(ut.TestCase):
     path = TEST_PATH + os.sep + 'TestNode'
