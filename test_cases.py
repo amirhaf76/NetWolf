@@ -148,8 +148,9 @@ class TestTcpServer(ut.TestCase):
             self.assertDictEqual({nfb.SRC: self.tcp.host_info,
                                   nfb.DES: self.client}, src_des)
             txt, temp_data = nfb.extract_response_data(temp_data)
+            temp_dict = nfb.extract_get_response_data(temp_data)
             self.assertEqual(nfb.FOUND_RESPONSE_TEXT, txt)
-            self.assertEqual(name, temp_data.decode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING))
+            self.assertEqual(name, temp_dict['name'])
             nfb.recv_data(skt, self.tcp.path)
 
         else:
@@ -157,8 +158,10 @@ class TestTcpServer(ut.TestCase):
             self.assertDictEqual({nfb.SRC: self.tcp.host_info,
                                   nfb.DES: self.client}, src_des)
             txt, temp_data = nfb.extract_response_data(temp_data)
+            print(temp_data)
+            temp_dict = nfb.extract_get_response_data(temp_data)
             self.assertEqual(nfb.NOT_FOUND_RESPONSE_TEXT, txt)
-            self.assertEqual(name, temp_data.decode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING))
+            self.assertEqual(name, temp_dict['name'])
 
         skt.close()
 
@@ -179,53 +182,11 @@ class TestTcpServer(ut.TestCase):
         temp = nfb.download_file_from(name,
                                       self.tcp.host_info,
                                       self.tcp.host_info,
-                                      self.tcp.path+os.sep+'test_download')
+                                      self.tcp.path + os.sep + 'test_download')
         self.assertTrue(temp[0])
         self.assertEqual('F:\\Amir\\University\\Computer Network\\Project\\NetWolf\\Test\\TestTcpServer\\test_download',
                          temp[2])
         self.tcp.stop()
-
-    def test_1(self):
-        self.tcp.start()
-        name = 'BACKGROUND FULL HD (5).JPG'
-        sleep(0.2)
-
-        skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        skt.connect((self.tcp.host_info.ip, self.tcp.host_info.pn))
-
-        dl = nfb.prepare_download_message_data(name)
-        dl = nfb.DownloadData(dl, self.tcp.host_info, self.tcp.host_info)
-
-        skt.send(dl.get_data())
-        print(nfb.extract_tcp_message(skt))
-
-        try:
-            flag = True
-
-            def td():
-                global flag
-                flag = False
-                skt.close()
-
-            t = threading.Timer(3, td, [])
-            t.start()
-
-            while flag:
-                cmd, src, data = nfb.extract_tcp_message(skt)
-                file = nfb.File('test', 'F:\\Amir\\University\\Computer Network\\' +
-                                      'Project\\NetWolf\\' +
-                                      'Test\\TestTcpServer\\test_download')
-                file.save_data(data)
-                print(cmd)
-                print(src)
-                print(data)
-
-        except socket.error as err:
-            print(err)
-        self.tcp.stop()
-
-    # def test(self):
-
 
 
 class TestUdpServer(ut.TestCase):
@@ -271,20 +232,20 @@ class TestUdpServer(ut.TestCase):
         cmd, src_des, temp_data = nfb.extract_udp_message(skt)
         self.assertEqual(nfb.ResponseData.command, cmd)
         txt, temp_data = nfb.extract_response_data(temp_data)
-        name, temp_data = nfb.extract_get_response_data(temp_data)
+        temp_dict = nfb.extract_get_response_data(temp_data)
 
         self.assertEqual(nfb.FOUND_RESPONSE_TEXT, txt)
-        self.assertEqual(self.tcp.host_info, temp_data)
-        self.assertEqual(existence_file, name)
+        self.assertEqual(self.tcp.host_info, temp_dict['tcp_addr'])
+        self.assertEqual(existence_file, temp_dict['name'])
 
         md, src_des, temp_data = nfb.extract_udp_message(skt)
         self.assertEqual(nfb.ResponseData.command, cmd)
         txt, temp_data = nfb.extract_response_data(temp_data)
-        name, temp_data = nfb.extract_get_response_data(temp_data)
+        temp_dict = nfb.extract_get_response_data(temp_data)
 
         self.assertEqual(nfb.FOUND_RESPONSE_TEXT, txt)
-        self.assertEqual(self.tcp.host_info, temp_data)
-        self.assertEqual('Test.txt', name)
+        self.assertEqual(self.tcp.host_info, temp_dict['tcp_addr'])
+        self.assertEqual('Test.txt', temp_dict['name'])
         skt.close()
 
     def client_discovery(self):
@@ -335,7 +296,6 @@ class TestUdpServer(ut.TestCase):
         self.udp.stop()
 
     def test_find_file(self):
-
         path = TEST_PATH + os.sep + 'TestUdpServer'
         dir_temp = {}
         ip = '127.0.1.17'
@@ -481,6 +441,8 @@ class TestFunctions(ut.TestCase):
         self.test_prepare_list_of_files()
         self.test_extract_list_of_files_data()
         self.test_prepare_download_message_data()
+        self.test_extract_file_info()
+        self.test_prepare_file_info()
 
     def test_get_size_of_file(self):
         size = ceil(7902383 / (10 ** 6))
@@ -585,6 +547,23 @@ class TestFunctions(ut.TestCase):
         self.assertEqual(txt, 'h123456789')
         self.assertEqual(raw_data, b'\x12\x34')
 
+    def test_extract_get_response_data(self):
+        temp_data = b'name:<TEST>|tcp_addr:127.0.0.5,'
+        temp_data += b' 2000, 192.168.0.2, 5000,'
+        temp_data += b' node0|service_mode:READY|asp:0.25'
+        temp_info = nfb.extract_get_response_data(bytearray(temp_data))
+        print(temp_info)
+        self.assertEqual('<TEST>', temp_info['name'])
+        addr = nfb.extract_address_ip_format(temp_info['tcp_addr'], is_bytes=False)[0]
+        test_addr = nfb.AddressIp('127.0.0.5',
+                                  2000,
+                                  '192.168.0.2',
+                                  5000,
+                                  'node0')
+        self.assertEqual(0.25, float(temp_info['asp']))
+        self.assertEqual(nfb.SERVICE_MODE_READY, temp_info['service_mode'])
+        self.assertEqual(test_addr, addr)
+
     def test_prepare_response_data(self):
         test_txt = '<TEST>'
         test_data = bytearray(b'\x12\x74')
@@ -596,11 +575,11 @@ class TestFunctions(ut.TestCase):
 
     def test_prepare_get_response(self):
         test_txt = '<TEST>'
-        test_message = nfb.prepare_get_response(test_txt, TEST_SRC)
-        temp1 = test_txt.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
-        temp2 = TEST_SRC.get_format().encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
-        test_data = bytearray([len(test_txt), len(TEST_SRC.get_format())]) + temp1 + temp2
+        test_message = nfb.prepare_get_response(test_txt, TEST_SRC, 0.25, nfb.SERVICE_MODE_READY)
 
+        temp1 = f'name:{test_txt}|tcp_addr:{TEST_SRC.get_format()}|service_mode:{nfb.SERVICE_MODE_READY}'
+
+        test_data = bytearray(temp1, nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
         self.assertEqual(test_data, test_message)
 
     def test_extract_download_data(self):
@@ -644,13 +623,18 @@ class TestFunctions(ut.TestCase):
         self.assertEqual(bi_name, nfb.prepare_download_message_data(name))
 
     def test_prepare_file_info(self):
-        info = nfb.prepare_file_info(name='<name>', partNums=5, not_valid_key=55)
-        self.assertEqual('name:<name>|partNums:5', info)
+        info = nfb.prepare_file_info(name='<name>',
+                                     partNums=5,
+                                     not_valid_key=55,
+                                     tcp_addr='127.0.2.3',
+                                     apg=.25)
+        print(info)
+        self.assertEqual('name:<name>|partNums:5|tcp_addr:127.0.2.3|apg:0.25', info)
 
     def test_extract_file_info(self):
-        info = 'name:<name>|partNums:5'
-        temp_data = nfb.extract_file_info(info)
-        temp_dict = {'name': '<name>', 'partNums': '5'}
+        info = 'name:<name>|partNums:5|tcp_addr:127.0.2.3|apg:0.25'
+        temp_data = nfb.extract_file_info(bytearray(info.encode(nfb.ENCODE_MODE, nfb.ERROR_ENCODING)))
+        temp_dict = {'name': '<name>', 'partNums': '5', 'apg': '0.25', 'tcp_addr': '127.0.2.3'}
         self.assertDictEqual(temp_dict, temp_data)
 
 
@@ -778,8 +762,11 @@ class TestDownload(ut.TestCase):
                 send = False
 
         if send:
+            temp_info = nfb.prepare_file_info(name='test', partNums=4)
             rsp_found = nfb.prepare_response_data(nfb.FOUND_RESPONSE_TEXT,
-                                                  bytearray(2))
+                                                  bytearray(temp_info,
+                                                            nfb.ENCODE_MODE,
+                                                            nfb.ERROR_ENCODING))
             s.send(nfb.ResponseData(rsp_found,
                                     nfb.AddressIp(self.server_ip,
                                                   self.server_port,
