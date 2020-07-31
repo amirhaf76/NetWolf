@@ -4,7 +4,7 @@ import os
 import socket
 import threading
 from time import sleep
-from math import ceil, log2
+from math import ceil
 
 LIST_TEST_PATH = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Test']
 LIST_BASE_FILES_PATH = ['F:', 'Amir', 'University', 'Computer Network', 'Project', 'NetWolf', 'Files_for_testing']
@@ -501,14 +501,6 @@ class TestFunctions(ut.TestCase):
         self.assertDictEqual(temp_res, self.test_address_dict)
 
         test_list = " 'amir' , 232, 'io3232', 546,45 | 'ali', 545, 'None', 'None'"
-        temp = (test_list.encode('utf-8', 'ignore'))
-
-        # # rise error
-        # try:
-        #     temp_res = nfb.make_directory_dictionary(temp)
-        #     self.assertNotEqual(temp_res, self.test_address_dict)
-        # except nfb.NotMatchFormat:
-        #     pass
 
     def test_filter_directory_dictionary(self):
 
@@ -577,7 +569,8 @@ class TestFunctions(ut.TestCase):
         test_txt = '<TEST>'
         test_message = nfb.prepare_get_response(test_txt, TEST_SRC, 0.25, nfb.SERVICE_MODE_READY)
 
-        temp1 = f'name:{test_txt}|tcp_addr:{TEST_SRC.get_format()}|service_mode:{nfb.SERVICE_MODE_READY}'
+        temp1 = f'name:{test_txt}|tcp_addr:{TEST_SRC.get_format()}|service_mode:{nfb.SERVICE_MODE_READY}|'
+        temp1 += f'apg:0.25'
 
         test_data = bytearray(temp1, nfb.ENCODE_MODE, nfb.ERROR_ENCODING)
         self.assertEqual(test_data, test_message)
@@ -813,7 +806,7 @@ class TestDownload(ut.TestCase):
         skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         skt.connect((self.server_ip, self.server_port))
 
-        rsp, src_des, temp_data = nfb.extract_tcp_message(skt)
+        nfb.extract_tcp_message(skt)
 
         state, name, path = nfb.recv_data(skt,
                                           TEST_PATH + os.sep + 'test_recv_data')
