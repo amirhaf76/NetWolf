@@ -9,12 +9,16 @@ from IPython.display import clear_output
 ENCODE_MODE = 'utf-8'
 ERROR_ENCODING = 'backslashreplace'
 
+KEYS = ['name', 'partNums', 'service_mode', 'apg', 'tcp_addr']
+SERVICE_MODE_FILL = 'FILL'
+SERVICE_MODE_READY = 'READY'
+
 ADDR_MESSAGE_LENGTH = 1
 CMD_MESSAGE_LENGTH = 1
 DATA_MESSAGE_LENGTH = 3
 DATA_MESSAGE_ORDER = 'big'
 
-SHOW_STATE_BY_PRINTING_DIRECTLY = True
+SHOW_STATE_BY_PRINTING_DIRECTLY = False
 
 DES = 'DES'
 SRC = 'SRC'
@@ -333,6 +337,59 @@ def response_done(skt: socket.socket, name: str, src: AddressIp, des: AddressIp)
     skt.send(ResponseData(rsp_done, src, des).get_data())
 
 
+def prompt_info_and_create_node():
+
+    def check_ip(temp_ip: str):
+        temp_ip = temp_ip.strip(os.linesep + ' ')
+        nums = temp_ip.split('.')
+
+        if not len(nums) == 4:
+            return False
+
+        for i in nums:
+            if int(i) > 255 or int(i) < 0:
+                return False
+
+        return True
+
+    ip = None
+    path = ''
+    name = ''
+    is_entered_path = False
+    is_entered_name = False
+    err = ''
+
+    while True:
+        try:
+            if not is_entered_path:
+                path = input(f'{err}Please enter directory of list: ')
+                if os.path.exists(path):
+                    err = ''
+                    is_entered_path = True
+                else:
+                    err = '[Your path is not correct] '
+                    clear_output()
+                    continue
+
+            if not is_entered_name:
+                name = input(f'{err}Please enter your name: ')
+                is_entered_name = True
+                err = ''
+
+            ip = input(f'{err}Please enter ip: ')
+            if check_ip(ip):
+                err = ''
+                break
+            else:
+                err = '[Your ip is not correct] '
+
+        except ValueError:
+            clear_output()
+            continue
+
+    return Node(name, path, ip, UDP_PORT_NUMBER)
+
+
 # classes
 class Server(threading.Thread):
 
@@ -360,8 +417,6 @@ class TcpServer(Server):
         self.path = path
         self.host_info = AddressIp(addr, port, None, None, name)
         self.__is_end = False
-
-        self.log = File(f'log_tcp_{addr}.txt', path)
 
     def run(self):
         try:
@@ -401,10 +456,6 @@ class TcpServer(Server):
         # start to listening
         self.__tcp_socket.listen(2)
 
-        self.log.append_to_txt('[TCP Server] Server has been started\n')
-        self.log.append_to_txt('[TCP Server] IP:{} port number:{} path:{}\n'.
-                               format(self.host_info.ip, self.host_info.pn, self.path))
-
         if SHOW_STATE_BY_PRINTING_DIRECTLY:
             print('[TCP Server] Server has been started')
             print('[TCP Server] IP:{} port number:{} path:{}'.
@@ -420,10 +471,8 @@ class TcpServer(Server):
             except OSError as err:
                 if self.__is_end:
                     print('[TCP Server] Server stop manually\n')
-                    self.log.append_to_txt('[TCP Server] Server stop manually\n')
                 else:
                     print(err)
-                    self.log.append_to_txt(err.strerror + '\n')
 
     def __client_handler(self, skt: socket.socket):
         command, src_des, raw_data = extract_tcp_message(skt)
@@ -483,6 +532,7 @@ class UdpServer(Server):
         self.__is_end = False
 
         self.available_file_in_net = {}
+        self.lock_for_searching = threading.Lock()
         self.get_req_num = 0
         self.pos_anw_get_req_num = 0
 
@@ -516,10 +566,15 @@ class UdpServer(Server):
 
             sleep(0.7)
 
+            self.lock_for_searching.acquire()
             if self.available_file_in_net.__contains__(name):
                 # todo need to reload it
-                return self.available_file_in_net[name][0]
+                temp_addr = self.__best_node(name)
+
+                self.lock_for_searching.release()
+                return temp_addr
             else:
+                self.lock_for_searching.release()
                 return None
 
     def __start_server(self):
@@ -552,7 +607,6 @@ class UdpServer(Server):
                     print('[UDP Server] Server stop manually')
                 else:
                     print(err)
-                    # self.log.append(err)
 
     def __client_handler(self, command: str, src_des: dict, rec_data: bytes):
 
@@ -588,7 +642,7 @@ class UdpServer(Server):
 
             # preparing get response
             if not self.get_req_num == 0:
-                ratio = self.pos_anw_get_req_num/self.get_req_num
+                ratio = self.pos_anw_get_req_num / self.get_req_num
             else:
                 ratio = 0
             get_rsp = prepare_get_response(name,
@@ -629,12 +683,32 @@ class UdpServer(Server):
 
             info = extract_get_response_data(temp_data)
 
-            # todo update completley
+            self.lock_for_searching.acquire()
+
             if self.available_file_in_net.__contains__(info['name']):
-                new_list = self.available_file_in_net[info['name']].append(info['tcp_addr'])
-                self.available_file_in_net.update({info['name']: new_list})
+                self.available_file_in_net[info['name']].append(info)
             else:
-                self.available_file_in_net.update({info['name']: [info['tcp_addr']]})
+                self.available_file_in_net.update({info['name']: [info]})
+
+            self.lock_for_searching.release()
+
+    def __best_node(self, name):
+
+        laziest = 0.1
+        select = None
+
+        for i in self.available_file_in_net[name]:
+            if laziest >= i['apg'] and SERVICE_MODE_READY == i['service_mode']:
+                select = i
+
+        if select is not None:
+            return select['tcp_addr']
+        else:
+            for i in self.available_file_in_net[name]:
+                if SERVICE_MODE_READY == i['service_mode']:
+                    return i['tcp_addr']
+
+            return None
 
 
 class Message:
@@ -701,7 +775,6 @@ class Message:
 
 
 class GetData(Message):
-
     command = 'GET'
 
     def __init__(self, get_data: bytearray, src: AddressIp, des: AddressIp):
@@ -765,16 +838,16 @@ class File:
 
         return temp
 
-    def append_to_txt(self, txt: str):
-        file = self.__open_file_for_appending(False)
-
-        file.write(txt)
-
-        temp = file.name
-
-        file.close()
-
-        return temp
+    # def append_to_txt(self, txt: str):
+    #     file = self.__open_file_for_appending(False)
+    #
+    #     file.write(txt)
+    #
+    #     temp = file.name
+    #
+    #     file.close()
+    #
+    #     return temp
 
     def save_data(self, data: bytearray):
         file = self.__open_new_file()
@@ -883,43 +956,44 @@ class Node:
             dir_file = open(file, 'rt')
 
             lines = dir_file.readlines()
+
+            dir_file.close()
+
             for line in lines:
                 line = line.split(' ')
-                l = []
+                addr_info = []
                 for e in line:
-
-                    l.append(e.strip(os.linesep))
+                    addr_info.append(e.strip(os.linesep))
                 # name ip pn proxy_ip proxy_pn
 
-                if len(l) == 2:
-                    temp = AddressIp(l[1],
+                if len(addr_info) == 2:
+                    temp = AddressIp(addr_info[1],
                                      self.port,
                                      None,
                                      None,
-                                     l[0])
+                                     addr_info[0])
                     new_list.append(temp)
-                elif len(l) == 3:
-                    temp = AddressIp(l[1],
-                                     int(l[2]),
+                elif len(addr_info) == 3:
+                    temp = AddressIp(addr_info[1],
+                                     int(addr_info[2]),
                                      None,
                                      None,
-                                     l[0])
+                                     addr_info[0])
                     new_list.append(temp)
-                elif len(l) == 4:
-                    temp = AddressIp(l[1],
-                                     int(l[2]),
-                                     l[3],
+                elif len(addr_info) == 4:
+                    temp = AddressIp(addr_info[1],
+                                     int(addr_info[2]),
+                                     addr_info[3],
                                      None,
-                                     l[0])
+                                     addr_info[0])
                     new_list.append(temp)
-                elif len(l) == 5:
-                    temp = AddressIp(l[1],
-                                     int(l[2]),
-                                     l[3],
-                                     int(l[4]),
-                                     l[0])
+                elif len(addr_info) == 5:
+                    temp = AddressIp(addr_info[1],
+                                     int(addr_info[2]),
+                                     addr_info[3],
+                                     int(addr_info[4]),
+                                     addr_info[0])
                     new_list.append(temp)
-            dir_file.close()
 
             temp = []
             for i in new_list:
@@ -930,7 +1004,6 @@ class Node:
         except FileNotFoundError:
             print('there is not find dir_file.txt')
         except ValueError as v:
-            dir_file.close()
             print('dir_file wasn\'t matched with format(<name> <ip> {}) {}'
                   .format('<proxy ip if it has proxy ip>', self.name))
             print(v)
@@ -1008,15 +1081,6 @@ class Node:
                         'DIR': temp + 'dir_file',
                         'TEMP': temp + 'temp_data'}
 
-    def __serialize_data(self, s_date):
-        pass
-
-    def __deserialize_data(self, s_data):
-        pass
-
-    def __chose_best(self):
-        pass
-
 
 class NetWolf:
     """
@@ -1028,7 +1092,7 @@ class NetWolf:
     def __init__(self):
         print('NetWolf 1398-1399')
 
-        self.prompt_info_and_create_node()
+        self.node = prompt_info_and_create_node()
 
         self.node.start_node()
 
@@ -1041,17 +1105,18 @@ class NetWolf:
 
     def __start_user_command(self):
         os.system('cls')
-        prompt = 'start'
-        adding_to_staus_area = []
+        adding_to_status_area = []
 
         while True:
             status_area = 'for exiting application type \'quit\'\n'
+            status_area += 'commands: get, load, clm, save_net\n'
             status_area += self.node.get_state()
+
+            for i in adding_to_status_area:
+                status_area += os.linesep + i
 
             print(status_area)
 
-            for i in adding_to_staus_area:
-                status_area += os.linesep + i
             sleep(0.2)
             prompt = input('line:')
 
@@ -1061,7 +1126,7 @@ class NetWolf:
                 self.node.stop_node()
                 break
 
-            self.answer_command(prompt, adding_to_staus_area)
+            self.answer_command(prompt, adding_to_status_area)
             os.system('cls')
 
     def __distribute_nodes(self):
@@ -1098,92 +1163,6 @@ class NetWolf:
         else:
             print('wrong command')
 
-    def prompt_info_and_create_node(self):
-
-        def check_ip(temp_ip: str):
-            temp_ip = temp_ip.strip(os.linesep + ' ')
-            nums = temp_ip.split('.')
-
-            if not len(nums) == 4:
-                return False
-
-            for i in nums:
-                if int(i) > 255 or int(i) < 0:
-                    return False
-
-            return True
-
-        ip = None
-        port = 0
-        path = ''
-        name = ''
-        is_entered_path = False
-        is_entered_name = False
-        err = ''
-        # while True:
-        #     try:
-        #         port = int(input(f'{err}Please enter port number: '))
-        #         err = ''
-        #         if port < 0 or port > 2 ** 16:
-        #             raise ValueError
-        #         break
-        #     except ValueError as value:
-        #         # print(value)
-        #         err = '[Your path is not correct] '
-        #         clear_output()
-        #         continue
-
-        while True:
-            try:
-                if not is_entered_path:
-                    path = input(f'{err}Please enter directory of list: ')
-                    if os.path.exists(path):
-                        err = ''
-                        is_entered_path = True
-                    else:
-                        err = '[Your path is not correct] '
-                        clear_output()
-                        continue
-
-                if not is_entered_name:
-                    name = input(f'{err}Please enter your name: ')
-                    # if os.path.exists(path + os.sep + name):
-                    #     err = '[There is name like this]'
-                    #     clear_output()
-                    #     continue
-                    # else:
-                    #     is_entered_name = True
-                    #     err = ''
-                    is_entered_name = True
-                    err = ''
-
-                ip = input(f'{err}Please enter ip: ')
-                if check_ip(ip):
-                    err = ''
-                    break
-                else:
-                    err = '[Your ip is not correct] '
-
-            except ValueError as value:
-                clear_output()
-                # print(value)
-                continue
-
-        # while True:
-        #     try:
-        #         name = input(f'{err}Please enter your name: ')
-        #         if os.path.exists(path + os.sep + name):
-        #             err = '[There is name like this]'
-        #             clear_output()
-        #         else:
-        #             break
-        #     except ValueError as value:
-        #         clear_output()
-        #         # print(value)
-        #         continue
-
-        self.node = Node(name, path, ip, UDP_PORT_NUMBER)
-
     def __str__(self):
         return "Net wolf < version 1>"
 
@@ -1195,11 +1174,6 @@ class NotMatchFormat(Exception):
 
 
 # end of classes
-KEYS = ['name', 'partNums', 'service_mode', 'apg', 'tcp_addr']
-SERVICE_MODE_FILL = 'FILL'
-SERVICE_MODE_READY = 'READY'
-
-
 def prepare_file_info(**kwargs):
     """
     prepare extra information files for sending.
@@ -1218,7 +1192,7 @@ def prepare_file_info(**kwargs):
 def extract_file_info(raw_data: bytearray):
     txt: str = raw_data.decode(ENCODE_MODE, ERROR_ENCODING)
     info = {}
-    print(txt)
+
     for k in txt.split('|'):
         key, value = k.split(':')
         if key in KEYS:
@@ -1265,10 +1239,10 @@ def prepare_response_data(rsp_txt: str, rsp_raw_data: bytearray):
     return bytearray(rsp_txt_size) + bytearray(rsp_raw_data_size) + rsp_txt + rsp_raw_data
 
 
-def prepare_get_response(name: str, tcp_server_addr: AddressIp, asp: float, service_mode: str):
+def prepare_get_response(name: str, tcp_server_addr: AddressIp, apg: float, service_mode: str):
     """
     get_response: name + tcp_server_address. asp: positive answer per Get Request
-    :param asp:
+    :param apg: radio between number of positive anwser to Get Request and number of Get Request
     :param service_mode:
     :param name:
     :param tcp_server_addr:
@@ -1284,7 +1258,7 @@ def prepare_get_response(name: str, tcp_server_addr: AddressIp, asp: float, serv
     info = prepare_file_info(name=name,
                              tcp_addr=tcp_server_addr.get_format(),
                              service_mode=service_mode,
-                             asp=asp)
+                             apg=apg)
 
     return bytearray(info.encode(ENCODE_MODE, ERROR_ENCODING))
     # return bytearray(get_name_size) + bytearray(get_addr_size) + get_name + get_addr
@@ -1292,7 +1266,7 @@ def prepare_get_response(name: str, tcp_server_addr: AddressIp, asp: float, serv
 
 def prepare_download_message_data(name: str):
     return bytearray(int.to_bytes(len(name), 2, 'big', signed=False)) \
-            + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
+           + bytearray(name, ENCODE_MODE, ERROR_ENCODING)
 
 
 def prepare_list_of_files(list_of_files: list) -> bytearray:
@@ -1340,9 +1314,11 @@ def send_response_message_to(rsp: bytearray, src_server: AddressIp, des_server: 
     send_message_to(resp_data, next_des)
 
 
-def recv_data(skt: socket.socket, path: str, siz=None):
+def recv_data(skt: socket.socket, path: str, siz: int = None):
     """
     receive files after getting SENDING_WAS_FINISHED response
+    :type siz: int
+    :param siz: show process of downloading with file's size
     :param skt: socket.socket
     :param path: the path which file will be stored
     :return: state: boolean, name: file's name which is received
@@ -1398,7 +1374,7 @@ def recv_data(skt: socket.socket, path: str, siz=None):
                 name = None
                 stored_path = None
                 break
-            except Exception:
+            except ValueError or IndexError:
                 print('[Error] recv_data: Error')
                 is_successful = False
                 name = None
@@ -1417,9 +1393,10 @@ def recv_data(skt: socket.socket, path: str, siz=None):
     return is_successful, name, stored_path
 
 
-def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str):
+def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str, show: bool = False):
     """
     downloading files from tcp server
+    :type show: bool
     :param name: name of requested file
     :param src: requester's address
     :param des: TCP server address which needed to download
@@ -1444,9 +1421,10 @@ def download_file_from(name: str, src: AddressIp, des: AddressIp, path: str):
             is_found, temp_data = extract_response_data(temp_data)
 
             if is_found == FOUND_RESPONSE_TEXT:
-                print(temp_data)
+
                 info = extract_get_response_data(temp_data)
-                print('{} is donwloading :'.format(info['name']), end='')
+                if show:
+                    print('{} is donwloading :'.format(info['name']), end='')
                 res = recv_data(skt, path, info['partNums'])
 
         skt.close()
@@ -1467,7 +1445,7 @@ def extract_response_data(raw_data: bytearray):
     rsp_txt_size = raw_data[0]
     rsp_data_size = int.from_bytes(raw_data[1:4], 'big', signed=False)
     rsp_txt = raw_data[4:(rsp_txt_size + 4)].decode(ENCODE_MODE, ERROR_ENCODING)
-    rsp_data = raw_data[rsp_txt_size + 4:rsp_data_size+rsp_txt_size + 4]
+    rsp_data = raw_data[rsp_txt_size + 4:rsp_data_size + rsp_txt_size + 4]
     return rsp_txt, rsp_data
 
 
@@ -1546,4 +1524,4 @@ def update_proxy_of_server(dir_dict: dict, node_ip: AddressIp):
 
 
 if __name__ == '__main__':
-    NetWolf()
+    nw = NetWolf()
