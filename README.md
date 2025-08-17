@@ -1,4 +1,4 @@
-# NetWolf
+# NetWolf (P2P File Transfer Software)
 
 ## What Is NetWolf
 Built a program enabling peer-to-peer file transfer over a network, with discovery of other active applications
