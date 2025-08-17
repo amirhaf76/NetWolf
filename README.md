@@ -1,11 +1,10 @@
 # NetWolf
 
-### What Is NetWolf
-It is a console application for distributing files on network by P2P way.
-With this application, each client plays as both TCP and UDP server and
-communicate with other client.
+## What Is NetWolf
+Built a program enabling peer-to-peer file transfer over a network, with discovery of other active applications
 
-### Some View of Application
+## Some View of Application
+
 - Log in view
 ![Screenshot 2021-10-26 002030](https://user-images.githubusercontent.com/44908316/138769294-0a417b8c-d4f0-420e-95c8-10affe30c12f.png)
 - Command line view
